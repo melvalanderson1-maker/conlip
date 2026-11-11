@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+curl_cffi
+psycopg[binary,pool]
+bcrypt
+PyJWT
+python-dotenv
+playwright
+pydantic
+python-multipart
+tzdata
+cryptography
+pyotp
+segno
+httpx
+lxml

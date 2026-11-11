@@ -1,0 +1,216 @@
+<main class="wrap">
+  <div class="chips">
+    @for (s of statsList(); track s.label) {
+      <div class="chip"><b>{{ s.value }}</b><span>{{ s.label }}</span></div>
+    }
+  </div>
+
+  <section class="filtros">
+    <div class="search">
+      <app-icon name="search" [size]="16" />
+      <input #qi placeholder="Buscar código, entidad o descripción…" (keyup.enter)="buscar(qi.value)" />
+    </div>
+    <select #es (change)="setEstado(es.value)" aria-label="Estado">
+      <option value="2" selected>Vigentes</option>
+      <option value="3">En evaluación</option>
+      <option value="4">Culminados</option>
+      <option value="">Todos los estados</option>
+    </select>
+    <label class="chk">
+      <input type="checkbox" #rel (change)="setRelevante(rel.checked)" />
+      <app-icon name="star" [size]="14" /> Solo mis categorías
+    </label>
+
+    @if (auth.esSuperadmin()) {
+      <div class="sesion">
+        @if (sesion()?.activa) {
+          <span class="sesion-ok">● Sesión SEACE activa</span>
+        } @else {
+          <span class="sesion-off">● Sin sesión</span>
+        }
+        <button type="button" class="btn-sesion" (click)="iniciarSesionErp()" [disabled]="iniciandoSesion()">
+          {{ iniciandoSesion() ? 'Iniciando… (hasta 30 s)' : 'Iniciar sesión con ERP' }}
+        </button>
+        @if (errorSesion()) {
+          <span class="sesion-error">{{ errorSesion() }}</span>
+        }
+      </div>
+    }
+    <button class="btn primary" (click)="buscar(qi.value)">Buscar</button>
+  </section>
+
+  <div class="tipos">
+    @for (t of tipos; track t.value) {
+      <button class="pill" [class.on]="objeto() === t.value" (click)="setObjeto(t.value)">{{ t.label }}</button>
+    }
+  </div>
+
+  <div class="resumen">
+    <span>Mostrando <b>{{ lista()?.items?.length ?? 0 }}</b> de <b>{{ (lista()?.total ?? 0).toLocaleString('es-PE') }}</b> contratos</span>
+    <span>Página {{ page() }} de {{ totalPages() }}</span>
+  </div>
+
+  @if (error()) {
+    <p class="error"><app-icon name="alert" [size]="16" /> {{ error() }}</p>
+  }
+
+  <div class="grid">
+    @for (c of lista()?.items ?? []; track c.id_contrato) {
+      @let e = est(c);
+      @let disp = disponible(c);
+      <article class="card" [class.disp]="disp" (click)="abrir(c)" tabindex="0" (keyup.enter)="abrir(c)">
+        @if (disp) {
+          <div class="cinta"><app-icon name="cart" [size]="13" /> Disponible para cotizar</div>
+        }
+        <div class="body">
+          <div class="fila1">
+            <span class="codigo">{{ c.codigo }}</span>
+            <span class="badge e{{ c.id_estado }}">{{ c.estado }}</span>
+          </div>
+          <div class="tipo"><app-icon name="tag" [size]="13" /> {{ tipoLabel(c) }}</div>
+          <h3>{{ c.descripcion }}</h3>
+          <div class="ent"><app-icon name="building" [size]="14" /> <span>{{ c.entidad }}</span></div>
+          <div class="fechas">
+            <div><small><app-icon name="calendar" [size]="12" /> Inicio</small><span>{{ fecha(c.fec_ini_cot) }}</span></div>
+            <div><small><app-icon name="clock" [size]="12" /> Vencimiento</small><span>{{ fecha(c.fec_fin_cot) }}</span></div>
+          </div>
+          <div class="pie">
+            <div class="est {{ e.tipo }}"><small>{{ e.label }}</small><b>{{ e.valor }}</b></div>
+            @if (c.n_archivos != null) {
+              <span class="mini"><app-icon name="clip" [size]="13" /> {{ c.n_archivos }}</span>
+            }
+            <button class="ojo" aria-label="Ver detalle" (click)="abrir(c); $event.stopPropagation()">
+              <app-icon name="eye" [size]="16" />
+            </button>
+          </div>
+        </div>
+      </article>
+    } @empty {
+      @if (loading()) {
+        @for (i of [1, 2, 3, 4, 5, 6]; track i) { <div class="card skeleton"></div> }
+      } @else {
+        <p class="vacio"><app-icon name="folder" [size]="28" /> Sin resultados</p>
+      }
+    }
+  </div>
+
+  <nav class="pag">
+    <button class="btn" (click)="ir(-1)" [disabled]="page() <= 1"><app-icon name="left" [size]="16" /> Anterior</button>
+    <span>Página {{ page() }} de {{ totalPages() }}</span>
+    <button class="btn" (click)="ir(1)" [disabled]="page() >= totalPages()">Siguiente <app-icon name="right" [size]="16" /></button>
+  </nav>
+</main>
+
+<!-- Drawer de detalle -->
+@if (sel(); as d) {
+  <div class="overlay" (click)="cerrar()">
+    <aside class="panel" role="dialog" aria-modal="true" [attr.aria-label]="'Contrato ' + d.codigo" (click)="$event.stopPropagation()">
+      <header class="p-head">
+        <div>
+          <small class="p-eyebrow">Contrato</small>
+          <h2>{{ d.codigo }}</h2>
+          <span class="badge e{{ d.id_estado }}">{{ d.estado }}</span>
+        </div>
+        <button class="x" aria-label="Cerrar" (click)="cerrar()"><app-icon name="x" [size]="18" /></button>
+      </header>
+
+      <div class="p-body">
+        <p class="p-desc">{{ d.descripcion }}</p>
+
+        <dl class="datos">
+          <div><dt><app-icon name="building" [size]="14" /> Entidad</dt><dd>{{ d.entidad }}</dd></div>
+          <div><dt><app-icon name="tag" [size]="14" /> Objeto</dt><dd>{{ d.objeto }}</dd></div>
+          <div><dt><app-icon name="calendar" [size]="14" /> Publicado</dt><dd>{{ fecha(d.fec_publica) }}</dd></div>
+          <div><dt><app-icon name="calendar" [size]="14" /> Inicio</dt><dd>{{ fecha(d.fec_ini_cot) }}</dd></div>
+          <div><dt><app-icon name="clock" [size]="14" /> Vencimiento</dt><dd>{{ fecha(d.fec_fin_cot) }}</dd></div>
+        </dl>
+
+@if (auth.puede('menor:cotizar')) {
+          <section class="asig">
+            <h3 class="p-sec"><app-icon name="cart" [size]="16" /> Asignación
+              @if (asigsContrato().length) { <span class="count">{{ asigsContrato().length }}</span> }
+            </h3>
+
+            @for (a of asigsContrato(); track a.id) {
+              <p class="asig-item">
+                <b>{{ a.para_id === auth.usuario()?.id ? 'Tú' : a.para_nombre }}</b>
+                <span class="asig-est e-{{ a.estado }}">{{ estadoNombre(a.estado) }}</span>
+                <small>{{ a.por_id === a.para_id ? 'auto-asignada' : 'asignada por ' + a.por_nombre }}</small>
+              </p>
+            } @empty {
+              <p class="muted">Aún no está asignada a nadie.</p>
+            }
+
+            <div class="asig-form">
+              <select aria-label="Asignar a" (change)="asigQuien.set($any($event.target).value)">
+                <option value="" [selected]="asigQuien() === ''">Asignar a…</option>
+                @for (m of equipo(); track m.id) {
+                  <option [value]="m.id" [selected]="asigQuien() === '' + m.id">
+                    {{ m.id === auth.usuario()?.id ? 'Yo (auto-asignarme)' : m.nombre }}
+                  </option>
+                }
+              </select>
+              <input placeholder="Nota (opcional)" maxlength="300" [value]="asigNota()"
+                     (input)="asigNota.set($any($event.target).value)" />
+              <button type="button" class="btn primary" [disabled]="asignando()" (click)="asignar()">
+                {{ asignando() ? 'Asignando…' : 'Asignar' }}
+              </button>
+            </div>
+            @if (errorAsig()) { <p class="sesion-error">{{ errorAsig() }}</p> }
+          </section>
+        }
+
+        <h3 class="p-sec"><app-icon name="clip" [size]="16" /> Archivos
+          @if (d.archivos) { <span class="count">{{ d.archivos.length }}</span> }
+        </h3>
+
+        @if (d.archivos === undefined) {
+          <div class="sk-line"></div><div class="sk-line"></div>
+        } @else if (d.archivos.length === 0) {
+          <p class="muted">Este contrato no tiene archivos.</p>
+        } @else {
+          <ul class="files">
+            @for (a of d.archivos; track $index) {
+              <li>
+                <button class="file" (click)="abrirArchivo(a)">
+                  <span class="f-ico"><app-icon name="file" [size]="18" /></span>
+                  <span class="f-name">{{ archivoNombre(a) }}</span>
+                  <app-icon name="eye" [size]="16" />
+                </button>
+              </li>
+            }
+          </ul>
+        }
+      </div>
+    </aside>
+  </div>
+}
+
+<!-- Modal de documento (encima del drawer) -->
+@if (visor(); as v) {
+  <div class="visor-bg" (click)="cerrarVisor()">
+    <div class="visor" role="dialog" aria-modal="true" [attr.aria-label]="v.nombre" (click)="$event.stopPropagation()">
+      <header class="v-head">
+        <span class="f-ico"><app-icon name="file" [size]="18" /></span>
+        <h4 [title]="v.nombre">{{ v.nombre }}</h4>
+        <a class="icon-btn" [href]="v.url" target="_blank" rel="noopener" aria-label="Abrir en pestaña nueva"><app-icon name="external" [size]="16" /></a>
+        <a class="icon-btn" [href]="v.url" [attr.download]="v.nombre" aria-label="Descargar"><app-icon name="download" [size]="16" /></a>
+        <button class="icon-btn" aria-label="Cerrar (Esc)" (click)="cerrarVisor()"><app-icon name="x" [size]="18" /></button>
+      </header>
+
+      <div class="v-body">
+        @if (v.tipo === 'pdf' && visorUrl(); as u) {
+          <iframe [src]="u" [title]="v.nombre"></iframe>
+        } @else if (v.tipo === 'imagen') {
+          <img [src]="v.url" [alt]="v.nombre" />
+        } @else {
+          <div class="v-fallback">
+            <app-icon name="file" [size]="40" />
+            <p>Este tipo de archivo no tiene vista previa.</p>
+            <a class="btn primary" [href]="v.url" [attr.download]="v.nombre"><app-icon name="download" [size]="16" /> Descargar</a>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+}

