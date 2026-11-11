@@ -1,0 +1,63 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      args:
+        INSTALAR_NAVEGADOR: "1"
+    restart: unless-stopped
+    environment:
+      ENTORNO: prod
+      TRUST_PROXY: "1"
+      APRENDE_DIR: /app/storage/aprende
+      SEACE_VER: "1"
+      SEACE_HEADLESS: "true"
+      MAYOR_REFRESCO_PARALELO: "3"
+      PAGO_PROVEEDOR: demo
+      PAGO_DEMO_PERMITIDO: "1"
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: "587"
+      SMTP_SEGURIDAD: starttls
+      EXIGIR_2FA: superadmin
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      SECRETS_KEY: ${SECRETS_KEY}
+      ADMIN_USUARIO: ${ADMIN_USUARIO}
+      ADMIN_CLAVE: ${ADMIN_CLAVE}
+      SEACE_RUC: ${SEACE_RUC}
+      SEACE_CLAVE: ${SEACE_CLAVE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_CLAVE: ${SMTP_CLAVE}
+      SMTP_DESDE: ${SMTP_DESDE}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+    volumes:
+      - aprende:/app/storage/aprende
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/salud', timeout=4)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    expose:
+      - "80"
+
+  respaldo:
+    image: alpine:3.20
+    restart: unless-stopped
+    volumes:
+      - aprende:/datos:ro
+      - respaldos:/respaldos
+    command: ["sh", "-c", "while true; do tar czf /respaldos/aprende-$$(date +%F).tgz -C /datos . ; find /respaldos -name 'aprende-*.tgz' -mtime +14 -delete ; sleep 86400; done"]
+
+volumes:
+  aprende:
+  respaldos:
