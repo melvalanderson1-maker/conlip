@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 ARG INSTALAR_NAVEGADOR=1
 ENV PYTHONUNBUFFERED=1 \
