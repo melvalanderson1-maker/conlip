@@ -16,7 +16,9 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 # Solo si tu scraper usa Playwright; con INSTALAR_NAVEGADOR=0 la imagen pesa mucho menos
-RUN if [ "$INSTALAR_NAVEGADOR" = "1" ]; then python -m playwright install --with-deps chromium && chmod -R a+rX /ms-playwright; fi
+RUN python --version && pip show playwright
+RUN if [ "$INSTALAR_NAVEGADOR" = "1" ]; then python -m playwright install-deps chromium; fi
+RUN if [ "$INSTALAR_NAVEGADOR" = "1" ]; then python -m playwright install chromium && chmod -R a+rX /ms-playwright; fi
 
 COPY . .
 
