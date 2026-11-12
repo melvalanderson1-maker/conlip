@@ -106,32 +106,17 @@ def info_conexion() -> dict:
 
 
 def suscribir_pagina() -> bool:
-    """Suscribe la aplicación a los eventos de la página de Facebook."""
+    """Suscribe la página a los avisos de Messenger."""
     c = _obligatoria()
 
-    # Verificar que el token corresponde a una página y que coincide
-    # con el identificador configurado en Conlip CRM.
-    datos = _graph(
-        "GET",
-        "/me",
-        consulta={"fields": "id,name"}
-    )
-
-    if str(datos.get("id", "")) != str(c["page_id"]):
-        raise ErrorWa(
-            "El token guardado no corresponde a la página configurada. "
-            "Vuelve a guardar el Page Access Token de Wankoraep."
-        )
-
-    # Suscribir la aplicación a los eventos de la página.
     r = _graph(
         "POST",
         f"/{c['page_id']}/subscribed_apps",
-        consulta={"subscribed_fields": "messages,leadgen"}
+        consulta={"subscribed_fields": "messages"}
     )
 
     if not r.get("success"):
-        raise ErrorWa("Meta no confirmó la suscripción de la página.")
+        raise ErrorWa("Meta no confirmó la suscripción de Messenger.")
 
     return True
 
