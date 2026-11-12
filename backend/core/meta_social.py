@@ -296,6 +296,7 @@ def procesar(payload: dict) -> dict:
     try:
         for entrada in payload.get("entry", []):
             if str(entrada.get("id")) != propio:
+                logger.warning("Aviso ignorado: el id %s no coincide con el configurado (%s)", entrada.get("id"), propio)
                 continue
             for ev in entrada.get("messaging", []):
                 try:

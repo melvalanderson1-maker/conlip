@@ -1,4 +1,5 @@
 import hmac
+import logging
 import json
 import os
 import re
@@ -17,6 +18,8 @@ from core.db import abrir_db
 from core.secretos import clave_ok, guardar, leer
 from core.seguridad import auditar, ip_cliente, solo_superadmin
 from modules.crm.router import _lead, contexto
+
+logger = logging.getLogger("crm_meta")
 
 router_webhook = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 router = APIRouter(prefix="/api/crm", tags=["crm-whatsapp"])
@@ -70,12 +73,14 @@ async def recibir_meta(request: Request):
     if len(cuerpo) > 2_000_000:
         raise HTTPException(413, "Demasiado grande")
     if not wa.firma_valida(cuerpo, request.headers.get("x-hub-signature-256")):
+        logger.warning("Aviso de Meta rechazado: firma inválida (falta el App Secret o es de otra app)")
         raise HTTPException(403, "Firma inválida")
     try:
         payload = json.loads(cuerpo)
     except ValueError:
         raise HTTPException(400, "JSON inválido")
     cuenta = await run_in_threadpool(ms.procesar, payload)
+    logger.warning("Aviso de Meta recibido: object=%s resultado=%s", payload.get("object"), cuenta)  # temporal, se quita al terminar las pruebas
     if cuenta["fallos"]:
         # Meta reintenta; los mensajes ya guardados no se duplican (índice único) ni los leads de anuncios (tabla de vistos)
         raise HTTPException(500, "No se pudo procesar todo el aviso")
@@ -392,7 +397,7 @@ def meta_suscribir(request: Request, yo: dict = Depends(solo_superadmin)):
     except wa.ErrorWa as e:
         raise HTTPException(400, str(e))
     auditar("meta_suscribir", yo["usuario"], ip_cliente(request), "página suscrita a mensajes y leads")
-    return {"ok": ok, "detalle": "Tu página quedó suscrita a los mensajes y a los leads de anuncios." if ok else "Meta no confirmó la suscripción."}
+    return {"ok": ok, "detalle": "Tu página quedó suscrita a los mensajes de Messenger." if ok else "Meta no confirmó la suscripción."}
 
 
 @router_admin_meta.post("/clave-entrada")
