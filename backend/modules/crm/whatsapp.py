@@ -3,13 +3,14 @@ import json
 import os
 import re
 import secrets
-from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from core import meta_social as ms
 from core import whatsapp as wa
 from core.crm import avisar_lead
 from core.db import abrir_db
@@ -20,11 +21,16 @@ from modules.crm.router import _lead, contexto
 router_webhook = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 router = APIRouter(prefix="/api/crm", tags=["crm-whatsapp"])
 router_admin = APIRouter(prefix="/api/integraciones/whatsapp", tags=["whatsapp-admin"], dependencies=[Depends(solo_superadmin)])
+router_admin_meta = APIRouter(prefix="/api/integraciones/meta", tags=["meta-admin"], dependencies=[Depends(solo_superadmin)])
 
 MEDIA_INLINE = ("image/jpeg", "image/png", "image/webp", "image/gif", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/amr", "video/mp4", "application/pdf")
 
 
-# ======================= WEBHOOK (lo llama Meta) =======================
+def _base() -> str:
+    return os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+
+
+# ======================= WEBHOOK DE WHATSAPP (lo llama Meta) =======================
 @router_webhook.get("/whatsapp")
 def verificar(request: Request):
     """Meta confirma que esta dirección es nuestra enviando el 'verify token' que configuramos."""
@@ -51,9 +57,57 @@ async def recibir(request: Request):
     return {"ok": True}
 
 
+# ======================= WEBHOOK DE FACEBOOK E INSTAGRAM (lo llama Meta) =======================
+@router_webhook.get("/meta")
+def verificar_meta(request: Request):
+    """Misma verificación que WhatsApp: usa el mismo 'verify token' de la misma app de Meta."""
+    return verificar(request)
+
+
+@router_webhook.post("/meta")
+async def recibir_meta(request: Request):
+    cuerpo = await request.body()
+    if len(cuerpo) > 2_000_000:
+        raise HTTPException(413, "Demasiado grande")
+    if not wa.firma_valida(cuerpo, request.headers.get("x-hub-signature-256")):
+        raise HTTPException(403, "Firma inválida")
+    try:
+        payload = json.loads(cuerpo)
+    except ValueError:
+        raise HTTPException(400, "JSON inválido")
+    cuenta = await run_in_threadpool(ms.procesar, payload)
+    if cuenta["fallos"]:
+        # Meta reintenta; los mensajes ya guardados no se duplican (índice único) ni los leads de anuncios (tabla de vistos)
+        raise HTTPException(500, "No se pudo procesar todo el aviso")
+    return {"ok": True}
+
+
+# ======================= ENTRADA GENÉRICA (Zapier, Make, otro servidor tuyo) =======================
+@router_webhook.post("/crm-entrada")
+async def entrada_generica(request: Request):
+    """Crea un lead desde un JSON. La clave va en la cabecera X-Webhook-Key. Llámala solo desde un servidor, nunca desde el navegador."""
+    if not ms.clave_generica_valida(request.headers.get("x-webhook-key")):
+        raise HTTPException(403, "Clave inválida")
+    cuerpo = await request.body()
+    if len(cuerpo) > 100_000:
+        raise HTTPException(413, "Demasiado grande")
+    try:
+        datos = json.loads(cuerpo)
+    except ValueError:
+        raise HTTPException(400, "JSON inválido")
+    if not isinstance(datos, dict):
+        raise HTTPException(400, "Se esperaba un objeto JSON")
+    try:
+        lid = await run_in_threadpool(ms.captar_generico, datos)
+    except wa.ErrorWa as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "id": lid}
+
+
 # ======================= CONVERSACIÓN EN EL CRM =======================
 class TextoIn(BaseModel):
     texto: str = Field(min_length=1, max_length=4000)
+    canal: Literal["whatsapp", "facebook", "instagram"] = "whatsapp"
 
 
 class PlantillaIn(BaseModel):
@@ -70,6 +124,21 @@ def _guardar_salida(con, lid: int, wamid: str, tipo: str, texto: str, usuario: s
         "UPDATE crm_leads SET wa_no_leidos=0, ultimo_contacto_en=now(), actualizado_en=now() WHERE id=?", (lid,))
 
 
+def _canales(l) -> list[dict]:
+    """Qué canales tiene este lead y, en cada uno, hasta cuándo se le puede responder con texto libre."""
+    def info(canal: str, disponible: bool, configurado: bool, ultimo) -> dict:
+        return {
+            "canal": canal, "disponible": disponible, "configurado": configurado,
+            "ventana_hasta": (ultimo + wa.VENTANA).isoformat() if ultimo else None,
+            "puede_texto_libre": wa.dentro_de_ventana(ultimo),
+        }
+    return [
+        info("whatsapp", bool(l["telefono"]), wa.configurado(), l["wa_ultimo_entrante"]),
+        info("facebook", bool(l["fb_psid"]), ms.configurado("facebook"), l["fb_ultimo_entrante"]),
+        info("instagram", bool(l["ig_id"]), ms.configurado("instagram"), l["ig_ultimo_entrante"]),
+    ]
+
+
 @router.get("/leads/{lid}/mensajes")
 def mensajes(lid: int, ctx: dict = Depends(contexto)):
     con = abrir_db()
@@ -77,7 +146,7 @@ def mensajes(lid: int, ctx: dict = Depends(contexto)):
         l = _lead(con, lid, ctx)
         filas = con.execute(
             "SELECT id, direccion, tipo, texto, (media_id IS NOT NULL) AS tiene_media, media_mime, media_nombre, estado, error, "
-            "enviado_por, creado_en FROM crm_mensajes WHERE lead_id=? ORDER BY creado_en DESC LIMIT 300", (lid,)).fetchall()
+            "enviado_por, creado_en, canal FROM crm_mensajes WHERE lead_id=? ORDER BY creado_en DESC LIMIT 300", (lid,)).fetchall()
     finally:
         con.close()
     ultimo = l["wa_ultimo_entrante"]
@@ -85,6 +154,7 @@ def mensajes(lid: int, ctx: dict = Depends(contexto)):
         "configurado": wa.configurado(), "telefono": l["telefono"], "no_leidos": l["wa_no_leidos"],
         "ventana_hasta": (ultimo + wa.VENTANA).isoformat() if ultimo else None,
         "puede_texto_libre": wa.dentro_de_ventana(ultimo),
+        "canales": _canales(l),
         "mensajes": [dict(f) for f in reversed(filas)],
     }
 
@@ -94,15 +164,22 @@ def enviar(lid: int, d: TextoIn, ctx: dict = Depends(contexto)):
     con = abrir_db()
     try:
         l = _lead(con, lid, ctx)
-        if not l["telefono"]:
-            raise HTTPException(400, "Este lead no tiene teléfono")
-        if not wa.dentro_de_ventana(l["wa_ultimo_entrante"]):
-            raise HTTPException(409, "Pasaron más de 24 horas desde el último mensaje del cliente. Envía una plantilla aprobada.")
-        try:
-            wamid = wa.enviar_texto(l["telefono"], d.texto.strip())
-        except wa.ErrorWa as e:
-            raise HTTPException(400, str(e))
-        _guardar_salida(con, lid, wamid, "text", d.texto.strip(), ctx["u"]["usuario"])
+        if d.canal == "whatsapp":
+            if not l["telefono"]:
+                raise HTTPException(400, "Este lead no tiene teléfono")
+            if not wa.dentro_de_ventana(l["wa_ultimo_entrante"]):
+                raise HTTPException(409, "Pasaron más de 24 horas desde el último mensaje del cliente. Envía una plantilla aprobada.")
+            try:
+                wamid = wa.enviar_texto(l["telefono"], d.texto.strip())
+            except wa.ErrorWa as e:
+                raise HTTPException(400, str(e))
+            _guardar_salida(con, lid, wamid, "text", d.texto.strip(), ctx["u"]["usuario"])
+        else:
+            try:
+                ms.enviar_a_lead(con, lid, d.canal, d.texto.strip(), ctx["u"]["usuario"])
+            except wa.ErrorWa as e:
+                raise HTTPException(400, str(e))
+            con.execute("UPDATE crm_leads SET wa_no_leidos=0 WHERE id=?", (lid,))
     finally:
         con.close()
     avisar_lead(lid)
@@ -158,14 +235,18 @@ def listar_plantillas(ctx: dict = Depends(contexto)):
 def media(mid: int, ctx: dict = Depends(contexto)):
     con = abrir_db()
     try:
-        m = con.execute("SELECT lead_id, media_id, media_mime, media_nombre, tipo FROM crm_mensajes WHERE id=? AND media_id IS NOT NULL", (mid,)).fetchone()
+        m = con.execute(
+            "SELECT lead_id, media_id, media_mime, media_nombre, tipo, canal FROM crm_mensajes WHERE id=? AND media_id IS NOT NULL", (mid,)).fetchone()
         if not m:
             raise HTTPException(404, "Archivo no encontrado")
         _lead(con, m["lead_id"], ctx)  # el asesor solo ve archivos de sus propios leads
     finally:
         con.close()
     try:
-        contenido, mime = wa.descargar_media(m["media_id"])
+        if m["canal"] in ("facebook", "instagram"):
+            contenido, mime = ms.descargar_url(m["media_id"])  # en estos canales media_id guarda la URL temporal del archivo
+        else:
+            contenido, mime = wa.descargar_media(m["media_id"])
     except wa.ErrorWa as e:
         raise HTTPException(400, str(e))
     mime = (m["media_mime"] or mime).split(";")[0].strip().lower()
@@ -176,7 +257,7 @@ def media(mid: int, ctx: dict = Depends(contexto)):
     return Response(content=contenido, media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
 
 
-# ======================= CONFIGURACIÓN (solo superadmin) =======================
+# ======================= CONFIGURACIÓN DE WHATSAPP (solo superadmin) =======================
 class ConfigIn(BaseModel):
     phone_id: str = Field(default="", max_length=30)
     waba_id: str = Field(default="", max_length=30)
@@ -186,7 +267,7 @@ class ConfigIn(BaseModel):
 
 
 def _url_webhook() -> str:
-    return os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/") + "/api/webhooks/whatsapp"
+    return _base() + "/api/webhooks/whatsapp"
 
 
 @router_admin.get("")
@@ -245,3 +326,81 @@ def suscribir(request: Request, yo: dict = Depends(solo_superadmin)):
         raise HTTPException(400, str(e))
     auditar("whatsapp_suscribir", yo["usuario"], ip_cliente(request), "app suscrita a la cuenta")
     return {"ok": ok, "detalle": "Tu app quedó suscrita a los avisos de tu cuenta de WhatsApp Business." if ok else "Meta no confirmó la suscripción."}
+
+
+# ======================= CONFIGURACIÓN DE FACEBOOK / INSTAGRAM (solo superadmin) =======================
+class ConfigMetaIn(BaseModel):
+    page_id: str = Field(default="", max_length=30)
+    ig_id: str = Field(default="", max_length=30)
+    token: str = Field(default="", max_length=800)
+
+
+@router_admin_meta.get("")
+def meta_estado():
+    c = ms.cfg()
+    con = abrir_db()
+    try:
+        r = con.execute("SELECT valor FROM configuracion WHERE clave='meta_ultimo_evento'").fetchone()
+    finally:
+        con.close()
+    return {
+        "clave_ok": clave_ok(), "configurado": ms.configurado(), "page_id": c["page_id"], "ig_id": c["ig_id"],
+        "token_guardado": bool(c["page_token"]),
+        "secreto_guardado": bool(leer("wa_app_secret")),  # la firma de Meta se valida con el App Secret de la misma app
+        "verify_token": leer("wa_verify_token"), "webhook_url": _base() + "/api/webhooks/meta",
+        "entrada_url": _base() + "/api/webhooks/crm-entrada", "clave_entrada_guardada": bool(leer("crm_webhook_clave")),
+        "ultimo_evento": r["valor"] if r else None,
+    }
+
+
+@router_admin_meta.put("")
+def meta_guardar(d: ConfigMetaIn, request: Request, yo: dict = Depends(solo_superadmin)):
+    if not clave_ok():
+        raise HTTPException(400, "Falta SECRETS_KEY en el servidor: no se pueden guardar credenciales de forma segura.")
+    page, ig, token = d.page_id.strip(), d.ig_id.strip(), d.token.strip()
+    if page and not re.fullmatch(r"\d{5,30}", page):
+        raise HTTPException(400, "El ID de la página de Facebook son solo números")
+    if ig and not re.fullmatch(r"\d{5,30}", ig):
+        raise HTTPException(400, "El ID de la cuenta de Instagram son solo números")
+    if token and (len(token) < 40 or re.search(r"\s", token)):
+        raise HTTPException(400, "El token de la página no parece completo. Cópialo de nuevo sin espacios.")
+    for clave, valor in (("meta_page_id", page), ("meta_ig_id", ig), ("meta_page_token", token)):
+        if valor:
+            guardar(clave, valor)
+    if not leer("wa_verify_token"):
+        guardar("wa_verify_token", secrets.token_urlsafe(24))
+    auditar("meta_config", yo["usuario"], ip_cliente(request), "credenciales de Facebook/Instagram actualizadas")
+    return {"ok": True}
+
+
+@router_admin_meta.post("/probar")
+def meta_probar():
+    try:
+        i = ms.info_conexion()
+    except wa.ErrorWa as e:
+        raise HTTPException(400, str(e))
+    partes = [f"Página: {i.get('pagina') or 'sin nombre'}"]
+    if "instagram" in i:
+        partes.append(f"Instagram: @{i.get('instagram') or 'sin usuario'}")
+    return {"ok": True, "detalle": "Conectado. " + " · ".join(partes) + "."}
+
+
+@router_admin_meta.post("/suscribir")
+def meta_suscribir(request: Request, yo: dict = Depends(solo_superadmin)):
+    try:
+        ok = ms.suscribir_pagina()
+    except wa.ErrorWa as e:
+        raise HTTPException(400, str(e))
+    auditar("meta_suscribir", yo["usuario"], ip_cliente(request), "página suscrita a mensajes y leads")
+    return {"ok": ok, "detalle": "Tu página quedó suscrita a los mensajes y a los leads de anuncios." if ok else "Meta no confirmó la suscripción."}
+
+
+@router_admin_meta.post("/clave-entrada")
+def meta_nueva_clave(request: Request, yo: dict = Depends(solo_superadmin)):
+    """Genera la clave de la entrada genérica. Se muestra UNA vez; si se pierde, se genera otra (la anterior deja de servir)."""
+    if not clave_ok():
+        raise HTTPException(400, "Falta SECRETS_KEY en el servidor: no se pueden guardar credenciales de forma segura.")
+    clave = secrets.token_urlsafe(32)
+    guardar("crm_webhook_clave", clave)
+    auditar("crm_webhook_clave", yo["usuario"], ip_cliente(request), "clave de entrada regenerada")
+    return {"clave": clave}

@@ -574,6 +574,19 @@ PASOS = [
             )""",
             "CREATE INDEX IF NOT EXISTS ix_historial_ocid ON procesos_mayor_historial (ocid, creado_en DESC)",
             "CREATE INDEX IF NOT EXISTS ix_historial_fecha ON procesos_mayor_historial (creado_en DESC)",
+            # ---------- CRM-3: Facebook, Instagram y leads de anuncios ----------
+            "ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS fb_psid TEXT",
+            "ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS ig_id TEXT",
+            "ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS fb_ultimo_entrante TIMESTAMPTZ",
+            "ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS ig_ultimo_entrante TIMESTAMPTZ",
+            "CREATE INDEX IF NOT EXISTS ix_crm_leads_fb ON crm_leads (fb_psid) WHERE fb_psid IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS ix_crm_leads_ig ON crm_leads (ig_id) WHERE ig_id IS NOT NULL",
+            "ALTER TABLE crm_mensajes ADD COLUMN IF NOT EXISTS canal TEXT NOT NULL DEFAULT 'whatsapp'",
+            # Un aviso de lead de anuncio se procesa una sola vez, aunque Meta lo reintente
+            """CREATE TABLE IF NOT EXISTS crm_leadgen_vistos (
+                leadgen_id TEXT PRIMARY KEY,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
         ]
 
 

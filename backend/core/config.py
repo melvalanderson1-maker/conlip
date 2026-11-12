@@ -16,3 +16,4 @@ def origen_permitido(origen: str | None) -> bool:
     if not origen:
         return False
     return origen in ORIGENES or (DEV and bool(_LAN.match(origen)))
+

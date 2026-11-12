@@ -260,8 +260,8 @@ def editar(lid: int, d: LeadPatch, ctx: dict = Depends(contexto)):
         campos = d.model_dump(exclude_unset=True)
         if "correo" in campos or "telefono" in campos:
             correo, tel = contacto_valido(campos.get("correo", l["correo"]), campos.get("telefono", l["telefono"]))
-            if not correo and not tel:
-                raise HTTPException(400, "El lead necesita un teléfono o un correo")
+            if not correo and not tel and not l["fb_psid"] and not l["ig_id"]:
+                raise HTTPException(400, "El lead necesita un teléfono, un correo o una conversación de Facebook/Instagram")
             dup = buscar_duplicado(con, correo, tel, excluir=lid)
             if dup:
                 raise HTTPException(409, "Otro lead abierto ya usa ese teléfono o correo")

@@ -1,12 +1,13 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, OnInit, inject, input, signal, viewChild } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, OnInit, computed, inject, input, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { TiempoRealService } from '../../core/tiempo-real.service';
 import { IconComponent } from '../../shared/icon.component';
-import { Conversacion, Mensaje, Plantilla, WhatsappService } from './crm-whatsapp.service';
+import { Canal, CanalInfo, Conversacion, Mensaje, Plantilla, WhatsappService } from './crm-whatsapp.service';
 
 const ZONA = 'America/Lima';
 const ESTADOS: Record<string, string> = { recibido: '', enviado: 'Enviado', entregado: 'Entregado', leido: 'Leído', fallido: 'No se entregó' };
+const NOMBRES: Record<Canal, string> = { whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram' };
 
 @Component({
   selector: 'app-crm-conversacion',
@@ -15,49 +16,61 @@ const ESTADOS: Record<string, string> = { recibido: '', enviado: 'Enviado', entr
   template: `
     <section class="wa">
       <div class="wa-cab">
-        <h4>Conversación de WhatsApp</h4>
-        @if (conv(); as c) {
-          @if (c.configurado && c.telefono) {
-            <span class="vent" [class.ok]="c.puede_texto_libre">
-              {{ c.puede_texto_libre ? 'Puedes responder hasta ' + hora(c.ventana_hasta) : 'Fuera de la ventana de 24 h: solo plantillas' }}
+        <h4>Conversación · {{ nombre(canal()) }}</h4>
+        @if (info(); as i) {
+          @if (i.configurado) {
+            <span class="vent" [class.ok]="i.puede_texto_libre">
+              {{ i.puede_texto_libre ? 'Puedes responder hasta ' + hora(i.ventana_hasta) : 'Fuera de la ventana de 24 h' + (canal() === 'whatsapp' ? ': solo plantillas' : '') }}
             </span>
           }
         }
       </div>
 
       @if (conv(); as c) {
-        @if (!c.configurado) {
-          <p class="nota">WhatsApp Business todavía no está conectado. El superadmin lo configura en CRM → Conexiones.</p>
-        } @else if (!c.telefono) {
-          <p class="nota">Este lead no tiene teléfono. Agrégalo en «Datos» para poder escribirle.</p>
-        } @else {
-          <div class="chat" #caja>
-            @for (m of c.mensajes; track m.id) {
-              <div class="burbuja" [class.sal]="m.direccion === 'out'" [class.mal]="m.estado === 'fallido'">
-                @if (m.tiene_media) {
-                  @if (esImagen(m)) {
-                    @if (imagenes()[m.id]; as u) { <img class="img" [src]="u" alt="Imagen enviada" /> }
-                    @else { <button type="button" class="btn" (click)="cargarImagen(m)">Ver imagen</button> }
-                  } @else {
-                    <button type="button" class="btn" (click)="descargar(m)">{{ m.media_nombre || (m.tipo === 'audio' ? 'Escuchar audio' : 'Descargar archivo') }}</button>
-                  }
-                }
-                @if (m.texto) { <p>{{ m.texto }}</p> }
-                <small>{{ hora(m.creado_en) }}@if (m.direccion === 'out') { · {{ estado(m.estado) }}@if (m.enviado_por) { · {{ m.enviado_por }} } }</small>
-                @if (m.error) { <small class="err">{{ m.error }}</small> }
-              </div>
-            } @empty { <p class="nota">Todavía no hay mensajes. Cuando el cliente escriba, aparecerán aquí al instante.</p> }
+        @if (disponibles().length > 1) {
+          <div class="canales" role="tablist" aria-label="Canal de la conversación">
+            @for (x of disponibles(); track x.canal) {
+              <button type="button" role="tab" class="chip" [class.on]="canal() === x.canal" [attr.aria-selected]="canal() === x.canal" (click)="elegirCanal(x.canal)">{{ nombre(x.canal) }}</button>
+            }
           </div>
+        }
 
-          @if (error()) { <p class="error">{{ error() }}</p> }
-          @if (c.puede_texto_libre) {
-            <div class="compositor">
-              <textarea rows="2" maxlength="4000" placeholder="Escribe tu respuesta (Enter envía, Shift+Enter hace un salto de línea)"
-                        [value]="texto()" (input)="texto.set($any($event.target).value)" (keydown.enter)="enter($event)"></textarea>
-              <button type="button" class="btn primary" [disabled]="enviando() || !texto().trim()" (click)="enviar()">Enviar</button>
-            </div>
+        @if (!disponibles().length) {
+          <p class="nota">Este lead todavía no tiene una conversación. Agrega un teléfono en «Datos» para escribirle por WhatsApp.</p>
+        } @else if (info(); as i) {
+          @if (!i.configurado) {
+            <p class="nota">{{ nombre(canal()) }} todavía no está conectado. El superadmin lo configura en CRM → Conexiones.</p>
           } @else {
-            <div class="fila acciones"><button type="button" class="btn primary" (click)="abrirPlantillas()">Enviar una plantilla</button></div>
+            <div class="chat" #caja>
+              @for (m of mensajesCanal(); track m.id) {
+                <div class="burbuja" [class.sal]="m.direccion === 'out'" [class.mal]="m.estado === 'fallido'">
+                  @if (m.tiene_media) {
+                    @if (esImagen(m)) {
+                      @if (imagenes()[m.id]; as u) { <img class="img" [src]="u" alt="Imagen enviada" /> }
+                      @else { <button type="button" class="btn" (click)="cargarImagen(m)">Ver imagen</button> }
+                    } @else {
+                      <button type="button" class="btn" (click)="descargar(m)">{{ m.media_nombre || (m.tipo === 'audio' ? 'Escuchar audio' : 'Descargar archivo') }}</button>
+                    }
+                  }
+                  @if (m.texto) { <p>{{ m.texto }}</p> }
+                  <small>{{ hora(m.creado_en) }}@if (m.direccion === 'out') { · {{ estado(m.estado) }}@if (m.enviado_por) { · {{ m.enviado_por }} } }</small>
+                  @if (m.error) { <small class="err">{{ m.error }}</small> }
+                </div>
+              } @empty { <p class="nota">Todavía no hay mensajes. Cuando el cliente escriba, aparecerán aquí al instante.</p> }
+            </div>
+
+            @if (error()) { <p class="error">{{ error() }}</p> }
+            @if (i.puede_texto_libre) {
+              <div class="compositor">
+                <textarea rows="2" maxlength="4000" placeholder="Escribe tu respuesta (Enter envía, Shift+Enter hace un salto de línea)"
+                          [value]="texto()" (input)="texto.set($any($event.target).value)" (keydown.enter)="enter($event)"></textarea>
+                <button type="button" class="btn primary" [disabled]="enviando() || !texto().trim()" (click)="enviar()">Enviar</button>
+              </div>
+            } @else if (canal() === 'whatsapp') {
+              <div class="fila acciones"><button type="button" class="btn primary" (click)="abrirPlantillas()">Enviar una plantilla</button></div>
+            } @else {
+              <p class="nota">Pasaron más de 24 horas desde el último mensaje del cliente: {{ nombre(canal()) }} ya no permite responderle. Cuando él escriba de nuevo podrás contestar aquí.@if (c.canales[0].disponible) { También puedes contactarlo por WhatsApp. }</p>
+            }
           }
         }
       } @else { <p class="nota">Cargando…</p> }
@@ -96,6 +109,8 @@ const ESTADOS: Record<string, string> = { recibido: '', enviado: 'Enviado', entr
     :host { display: block; --line: #e2e8f4; --muted: #5a6784; --brand: #1d4ed8; }
     .wa { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: flex; flex-direction: column; gap: 10px; }
     .wa-cab { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; } h4 { margin: 0; }
+    .canales { display: flex; gap: 6px; flex-wrap: wrap; }
+    .chip { padding: 5px 14px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; } .chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
     .vent { padding: 3px 10px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: .74rem; font-weight: 700; } .vent.ok { background: #d1fae5; color: #047857; }
     .chat { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; padding: 10px; border-radius: 12px; background: #efeae2; }
     .burbuja { align-self: flex-start; max-width: 82%; padding: 8px 12px; border-radius: 12px 12px 12px 4px; background: #fff; box-shadow: 0 1px 1px rgb(0 0 0 / .08); display: flex; flex-direction: column; gap: 4px; }
@@ -122,6 +137,7 @@ export class CrmConversacionComponent implements OnInit {
   private readonly caja = viewChild<ElementRef<HTMLElement>>('caja');
 
   readonly conv = signal<Conversacion | null>(null);
+  readonly canal = signal<Canal>('whatsapp');
   readonly texto = signal<string>('');
   readonly enviando = signal<boolean>(false);
   readonly error = signal<string>('');
@@ -131,6 +147,11 @@ export class CrmConversacionComponent implements OnInit {
   readonly sel = signal<Plantilla | null>(null);
   readonly vars = signal<string[]>([]);
   readonly errorModal = signal<string>('');
+  private eligioCanal = false;
+
+  readonly disponibles = computed<CanalInfo[]>(() => (this.conv()?.canales ?? []).filter((x) => x.disponible));
+  readonly info = computed<CanalInfo | null>(() => this.disponibles().find((x) => x.canal === this.canal()) ?? null);
+  readonly mensajesCanal = computed<Mensaje[]>(() => (this.conv()?.mensajes ?? []).filter((m) => (m.canal ?? 'whatsapp') === this.canal()));
 
   constructor() {
     this.destroyRef.onDestroy(() => Object.values(this.imagenes()).forEach((u) => URL.revokeObjectURL(u)));
@@ -142,18 +163,40 @@ export class CrmConversacionComponent implements OnInit {
     this.rt.cambios('crm').pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => this.cargar());
   }
 
+  private ajustarCanal(c: Conversacion): void {
+    const disp = c.canales.filter((x) => x.disponible).map((x) => x.canal);
+    if (!disp.length) return;
+    if (!this.eligioCanal) {
+      // Al abrir la ficha se muestra el canal del último mensaje que escribió el cliente
+      const ultimo = [...c.mensajes].reverse().find((m) => m.direccion === 'in');
+      this.canal.set(ultimo && disp.includes(ultimo.canal) ? ultimo.canal : disp[0]);
+      this.eligioCanal = true;
+    } else if (!disp.includes(this.canal())) {
+      this.canal.set(disp[0]);
+    }
+  }
+
   private cargar(): void {
     this.api.mensajes(this.leadId()).subscribe({
       next: (c) => {
         this.conv.set(c);
+        this.ajustarCanal(c);
         if (c.no_leidos > 0) this.api.leido(this.leadId()).subscribe({ error: () => undefined });
-        c.mensajes.filter((m) => this.esImagen(m) && !this.imagenes()[m.id]).slice(-8).forEach((m) => this.cargarImagen(m));
+        this.mensajesCanal().filter((m) => this.esImagen(m) && !this.imagenes()[m.id]).slice(-8).forEach((m) => this.cargarImagen(m));
         setTimeout(() => { const el = this.caja()?.nativeElement; if (el) el.scrollTop = el.scrollHeight; });
       },
-      error: () => this.conv.set({ configurado: false, telefono: '', no_leidos: 0, ventana_hasta: null, puede_texto_libre: false, mensajes: [] }),
+      error: () => this.conv.set({ configurado: false, telefono: '', no_leidos: 0, ventana_hasta: null, puede_texto_libre: false, canales: [], mensajes: [] }),
     });
   }
 
+  elegirCanal(c: Canal): void {
+    this.canal.set(c);
+    this.error.set('');
+    this.mensajesCanal().filter((m) => this.esImagen(m) && !this.imagenes()[m.id]).slice(-8).forEach((m) => this.cargarImagen(m));
+    setTimeout(() => { const el = this.caja()?.nativeElement; if (el) el.scrollTop = el.scrollHeight; });
+  }
+
+  nombre(c: Canal): string { return NOMBRES[c]; }
   hora(iso: string | null): string {
     return iso ? new Date(iso).toLocaleString('es-PE', { timeZone: ZONA, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : '';
   }
@@ -197,13 +240,13 @@ export class CrmConversacionComponent implements OnInit {
     if (!t || this.enviando()) return;
     this.enviando.set(true);
     this.error.set('');
-    this.api.enviar(this.leadId(), t).subscribe({
+    this.api.enviar(this.leadId(), t, this.canal()).subscribe({
       next: () => { this.enviando.set(false); this.texto.set(''); this.cargar(); },
       error: (e: HttpErrorResponse) => { this.enviando.set(false); this.error.set(this.msg(e)); this.cargar(); },
     });
   }
 
-  // ---------------- Plantillas ----------------
+  // ---------------- Plantillas (solo WhatsApp) ----------------
   abrirPlantillas(): void {
     this.sel.set(null); this.vars.set([]); this.errorModal.set(''); this.modal.set(true);
     this.api.plantillas().subscribe({
