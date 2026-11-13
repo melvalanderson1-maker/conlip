@@ -89,8 +89,11 @@ import { EstadoMeta, EstadoWa, WhatsappService } from './crm-whatsapp.service';
         <div class="grid2">
           <label>ID de la página de Facebook <input inputmode="numeric" [value]="pageId()" (input)="pageId.set($any($event.target).value)" [placeholder]="m.page_id || 'Solo números'" /></label>
           <label>ID de la cuenta de Instagram (opcional) <input inputmode="numeric" [value]="igId()" (input)="igId.set($any($event.target).value)" [placeholder]="m.ig_id || 'Solo números'" /></label>
-          <label>Token de acceso de la página
+          <label>Token de acceso de la página (Messenger)
             <input type="password" autocomplete="new-password" [value]="tokenM()" (input)="tokenM.set($any($event.target).value)" [placeholder]="m.token_guardado ? 'Guardado. Escribe solo para cambiarlo' : 'Pega el token de la página'" />
+          </label>
+          <label>Token de Instagram
+            <input type="password" autocomplete="new-password" [value]="tokenIg()" (input)="tokenIg.set($any($event.target).value)" [placeholder]="m.ig_token_guardado ? 'Guardado. Escribe solo para cambiarlo' : 'Pega el token de Instagram'" />
           </label>
         </div>
 
@@ -175,6 +178,7 @@ export class CrmConexionesComponent implements OnInit {
   readonly pageId = signal<string>('');
   readonly igId = signal<string>('');
   readonly tokenM = signal<string>('');
+  readonly tokenIg = signal<string>('');
   readonly claveNueva = signal<string>('');
 
   ngOnInit(): void {
@@ -236,9 +240,9 @@ export class CrmConexionesComponent implements OnInit {
   // ---------------- Facebook / Instagram ----------------
   guardarMeta(): void {
     this.ocupado.set(true);
-    this.api.guardarMeta({ page_id: this.pageId(), ig_id: this.igId(), token: this.tokenM() }).subscribe({
+    this.api.guardarMeta({ page_id: this.pageId(), ig_id: this.igId(), token: this.tokenM(), ig_token: this.tokenIg() }).subscribe({
       next: () => {
-        this.ocupado.set(false); this.pageId.set(''); this.igId.set(''); this.tokenM.set('');
+        this.ocupado.set(false); this.pageId.set(''); this.igId.set(''); this.tokenM.set(''); this.tokenIg.set('');
         this.ok('Guardado. Ahora pulsa «Probar conexión».'); this.cargar();
       },
       error: (e: HttpErrorResponse) => this.fallo(e),

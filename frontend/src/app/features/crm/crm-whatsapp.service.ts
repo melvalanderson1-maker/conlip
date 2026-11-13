@@ -22,7 +22,7 @@ export interface EstadoWa {
   version: string; verify_token: string; webhook_url: string; ultimo_evento: string | null;
 }
 export interface EstadoMeta {
-  clave_ok: boolean; configurado: boolean; page_id: string; ig_id: string; token_guardado: boolean; secreto_guardado: boolean;
+  clave_ok: boolean; configurado: boolean; page_id: string; ig_id: string; token_guardado: boolean; ig_token_guardado: boolean; secreto_guardado: boolean;
   verify_token: string; webhook_url: string; entrada_url: string; clave_entrada_guardada: boolean; ultimo_evento: string | null;
 }
 

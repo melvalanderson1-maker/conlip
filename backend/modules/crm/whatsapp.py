@@ -80,7 +80,7 @@ async def recibir_meta(request: Request):
     except ValueError:
         raise HTTPException(400, "JSON inválido")
     cuenta = await run_in_threadpool(ms.procesar, payload)
-    logger.warning("Aviso de Meta recibido: object=%s resultado=%s", payload.get("object"), cuenta)  # temporal, se quita al terminar las pruebas
+    logger.info("Aviso de Meta recibido: object=%s resultado=%s", payload.get("object"), cuenta)  # temporal, se quita al terminar las pruebas
     if cuenta["fallos"]:
         # Meta reintenta; los mensajes ya guardados no se duplican (índice único) ni los leads de anuncios (tabla de vistos)
         raise HTTPException(500, "No se pudo procesar todo el aviso")
@@ -338,6 +338,7 @@ class ConfigMetaIn(BaseModel):
     page_id: str = Field(default="", max_length=30)
     ig_id: str = Field(default="", max_length=30)
     token: str = Field(default="", max_length=800)
+    ig_token: str = Field(default="", max_length=800)
 
 
 @router_admin_meta.get("")
@@ -350,7 +351,7 @@ def meta_estado():
         con.close()
     return {
         "clave_ok": clave_ok(), "configurado": ms.configurado(), "page_id": c["page_id"], "ig_id": c["ig_id"],
-        "token_guardado": bool(c["page_token"]),
+        "token_guardado": bool(c["page_token"]), "ig_token_guardado": bool(c["ig_token"]),
         "secreto_guardado": bool(leer("wa_app_secret")),  # la firma de Meta se valida con el App Secret de la misma app
         "verify_token": leer("wa_verify_token"), "webhook_url": _base() + "/api/webhooks/meta",
         "entrada_url": _base() + "/api/webhooks/crm-entrada", "clave_entrada_guardada": bool(leer("crm_webhook_clave")),
@@ -362,14 +363,16 @@ def meta_estado():
 def meta_guardar(d: ConfigMetaIn, request: Request, yo: dict = Depends(solo_superadmin)):
     if not clave_ok():
         raise HTTPException(400, "Falta SECRETS_KEY en el servidor: no se pueden guardar credenciales de forma segura.")
-    page, ig, token = d.page_id.strip(), d.ig_id.strip(), d.token.strip()
+    page, ig, token, ig_token = d.page_id.strip(), d.ig_id.strip(), d.token.strip(), d.ig_token.strip()
     if page and not re.fullmatch(r"\d{5,30}", page):
         raise HTTPException(400, "El ID de la página de Facebook son solo números")
     if ig and not re.fullmatch(r"\d{5,30}", ig):
         raise HTTPException(400, "El ID de la cuenta de Instagram son solo números")
     if token and (len(token) < 40 or re.search(r"\s", token)):
         raise HTTPException(400, "El token de la página no parece completo. Cópialo de nuevo sin espacios.")
-    for clave, valor in (("meta_page_id", page), ("meta_ig_id", ig), ("meta_page_token", token)):
+    if ig_token and (len(ig_token) < 40 or re.search(r"\s", ig_token)):
+        raise HTTPException(400, "El token de Instagram no parece completo. Cópialo de nuevo sin espacios.")
+    for clave, valor in (("meta_page_id", page), ("meta_ig_id", ig), ("meta_page_token", token), ("meta_ig_token", ig_token)):
         if valor:
             guardar(clave, valor)
     if not leer("wa_verify_token"):
@@ -384,10 +387,17 @@ def meta_probar():
         i = ms.info_conexion()
     except wa.ErrorWa as e:
         raise HTTPException(400, str(e))
-    partes = [f"Página: {i.get('pagina') or 'sin nombre'}"]
+    partes = []
+    if "pagina" in i:
+        partes.append(f"Messenger: página {i['pagina'] or 'sin nombre'}")
     if "instagram" in i:
-        partes.append(f"Instagram: @{i.get('instagram') or 'sin usuario'}")
-    return {"ok": True, "detalle": "Conectado. " + " · ".join(partes) + "."}
+        partes.append(f"Instagram: @{i['instagram'] or 'sin usuario'}")
+    if not partes:
+        raise HTTPException(400, " · ".join(i["errores"]))
+    detalle = "Conectado. " + " · ".join(partes) + "."
+    if i["errores"]:
+        detalle += " Con problemas: " + " · ".join(i["errores"])
+    return {"ok": True, "detalle": detalle}
 
 
 @router_admin_meta.post("/suscribir")
