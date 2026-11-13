@@ -1,6 +1,7 @@
 """CRM-3: Messenger, Instagram Direct, leads de anuncios de Facebook (Lead Ads) y entrada genérica por webhook.
 
 Usa la MISMA app de Meta que WhatsApp: misma firma (App Secret) y mismo token de verificación del webhook.
+Messenger usa el token de la página; Instagram usa su propio token (de usuario del sistema) y su propio ID.
 Nada de aquí puede romper el CRM: los errores de Meta se convierten en ErrorWa con un mensaje legible.
 """
 import hmac
@@ -28,8 +29,8 @@ MAX_MEDIA = 16 * 1024 * 1024
 HOSTS_MEDIA = (".fbcdn.net", ".cdninstagram.com", ".fbsbx.com")
 
 ERRORES = {
-    190: "El token de acceso de la página venció o no es válido. Genera uno nuevo en Meta y guárdalo en CRM → Conexiones.",
-    200: "Meta negó el permiso. Revisa que la app tenga los permisos de mensajería y que la página esté conectada.",
+    190: "El token de acceso venció o no es válido. Genera uno nuevo en Meta y guárdalo en CRM → Conexiones.",
+    200: "Meta negó el permiso. Revisa que la app tenga los permisos de mensajería y que la cuenta esté conectada.",
     551: "Esa persona no está disponible para recibir mensajes ahora.",
     368: "Meta bloqueó el mensaje por posible spam.",
     100: "Meta rechazó la solicitud por un dato inválido.",
@@ -48,33 +49,41 @@ def traducir_error(codigo: int, subcodigo: int = 0, mensaje: str = "") -> str:
 # ---------------- Configuración (cifrada, se edita en el panel) ----------------
 def cfg() -> dict[str, str]:
     return {
-        "page_id": leer("meta_page_id"), "page_token": leer("meta_page_token"), "ig_id": leer("meta_ig_id"),
+        "page_id": leer("meta_page_id"), "page_token": leer("meta_page_token"),
+        "ig_id": leer("meta_ig_id"), "ig_token": leer("meta_ig_token"),
         "version": leer("wa_version") or VERSION_BASE,
     }
 
 
 def configurado(canal: str | None = None) -> bool:
     c = cfg()
-    if not (c["page_id"] and c["page_token"]):
-        return False
-    return bool(c["ig_id"]) if canal == "instagram" else True
+    if canal == "facebook":
+        return bool(c["page_id"] and c["page_token"])
+    if canal == "instagram":
+        # Instagram usa su propio token; si no hay, intenta con el de la página (por compatibilidad)
+        return bool(c["ig_id"] and (c["ig_token"] or (c["page_id"] and c["page_token"])))
+    return configurado("facebook") or configurado("instagram")
 
 
-def _obligatoria() -> dict[str, str]:
+def _obligatoria(canal: str = "facebook") -> dict[str, str]:
     c = cfg()
-    if not (c["page_id"] and c["page_token"]):
-        raise ErrorWa("Facebook/Instagram no está configurado. Pídele al superadmin que lo conecte en CRM → Conexiones.")
-    return c
+    if canal == "instagram":
+        if not configurado("instagram"):
+            raise ErrorWa("Instagram no está configurado. Pídele al superadmin que lo conecte en CRM → Conexiones.")
+        return {**c, "token": c["ig_token"] or c["page_token"]}
+    if not configurado("facebook"):
+        raise ErrorWa("Facebook no está configurado. Pídele al superadmin que lo conecte en CRM → Conexiones.")
+    return {**c, "token": c["page_token"]}
 
 
 # ---------------- Llamadas a la API de Meta ----------------
-def _graph(metodo: str, ruta: str, cuerpo: dict | None = None, consulta: dict | None = None):
-    c = _obligatoria()
+def _graph(metodo: str, ruta: str, cuerpo: dict | None = None, consulta: dict | None = None, canal: str = "facebook"):
+    c = _obligatoria(canal)
     url = f"{GRAPH}/{c['version']}{ruta}"
     if consulta:
         url += "?" + urllib.parse.urlencode(consulta)
     datos = json.dumps(cuerpo).encode() if cuerpo is not None else (b"" if metodo == "POST" else None)
-    cab = {"Authorization": f"Bearer {c['page_token']}"}
+    cab = {"Authorization": f"Bearer {c['token']}"}
     if cuerpo is not None:
         cab["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=datos, method=metodo, headers=cab)
@@ -96,13 +105,22 @@ def _graph(metodo: str, ruta: str, cuerpo: dict | None = None, consulta: dict | 
 
 
 def info_conexion() -> dict:
-    """Para el botón «Probar conexión» del panel."""
-    c = _obligatoria()
-    salida: dict = {"pagina": _graph("GET", f"/{c['page_id']}", consulta={"fields": "name"}).get("name", "")}
-    if c["ig_id"]:
-        salida["instagram"] = _graph("GET", f"/{c['ig_id']}", consulta={"fields": "username"}).get("username", "")
+    """Para el botón «Probar conexión»: prueba cada canal por separado y dice cuál falla."""
+    c = cfg()
+    salida: dict = {"errores": []}
+    if configurado("facebook"):
+        try:
+            salida["pagina"] = _graph("GET", f"/{c['page_id']}", consulta={"fields": "name"}).get("name", "")
+        except ErrorWa as e:
+            salida["errores"].append(f"Messenger: {e}")
+    if configurado("instagram"):
+        try:
+            salida["instagram"] = _graph("GET", f"/{c['ig_id']}", consulta={"fields": "username"}, canal="instagram").get("username", "")
+        except ErrorWa as e:
+            salida["errores"].append(f"Instagram: {e}")
+    if "pagina" not in salida and "instagram" not in salida and not salida["errores"]:
+        raise ErrorWa("Falta configurar la página de Facebook o la cuenta de Instagram.")
     return salida
-
 
 
 def suscribir_pagina() -> bool:
@@ -121,12 +139,11 @@ def suscribir_pagina() -> bool:
     return True
 
 
-
 def nombre_perfil(canal: str, id_cliente: str) -> str:
     """Nombre público del cliente. Meta a veces no lo entrega; en ese caso devuelve vacío."""
     try:
         campos = "name,username" if canal == "instagram" else "name"
-        d = _graph("GET", f"/{id_cliente}", consulta={"fields": campos})
+        d = _graph("GET", f"/{id_cliente}", consulta={"fields": campos}, canal=canal)
         return (d.get("name") or d.get("username") or "").strip()
     except Exception:
         return ""
@@ -134,11 +151,13 @@ def nombre_perfil(canal: str, id_cliente: str) -> str:
 
 def enviar(canal: str, destinatario: str, texto: str) -> str:
     """Envía un texto por Messenger o Instagram. Devuelve el id del mensaje."""
-    c = _obligatoria()
-    if canal == "instagram" and not c["ig_id"]:
-        raise ErrorWa("Falta el ID de la cuenta de Instagram en CRM → Conexiones.")
-    r = _graph("POST", f"/{c['page_id']}/messages", {
-        "recipient": {"id": destinatario}, "messaging_type": "RESPONSE", "message": {"text": texto}})
+    c = _obligatoria(canal)
+    if canal == "instagram":
+        r = _graph("POST", f"/{c['ig_id']}/messages",
+                   {"recipient": {"id": destinatario}, "message": {"text": texto}}, canal="instagram")
+    else:
+        r = _graph("POST", f"/{c['page_id']}/messages",
+                   {"recipient": {"id": destinatario}, "messaging_type": "RESPONSE", "message": {"text": texto}})
     return r["message_id"]
 
 
