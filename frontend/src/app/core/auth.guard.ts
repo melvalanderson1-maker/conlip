@@ -52,3 +52,12 @@ export const asesorGuard: CanActivateFn = () => {
   const router = inject(Router);
   return auth.esAsesor() ? true : router.createUrlTree(['/']);
 };
+
+
+
+/** Ejecutivos de ventas y asesores (quien sea ejecutivo también). El backend valida si de verdad lo es. */
+export const ejecutivoGuard: CanActivateFn = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return auth.esEjecutivo() || auth.esAsesor() ? true : router.createUrlTree(['/']);
+};

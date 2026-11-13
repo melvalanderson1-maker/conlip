@@ -95,10 +95,10 @@ PASOS = [
          AND NOT EXISTS (SELECT 1 FROM usuarios WHERE rol='superadmin')""",
     """INSERT INTO empresas (tipo, nombre, doc_tipo, doc_numero, correo, cupo_usuarios)
        SELECT 'empresa','Demo','RUC','00000000000','demo@invalido.local',10
-        WHERE EXISTS (SELECT 1 FROM usuarios WHERE empresa_id IS NULL AND rol NOT IN ('superadmin','asesor'))
+        WHERE EXISTS (SELECT 1 FROM usuarios WHERE empresa_id IS NULL AND rol NOT IN ('superadmin','asesor','ejecutivo'))
        ON CONFLICT (doc_tipo, doc_numero) DO NOTHING""",
     """UPDATE usuarios SET empresa_id=(SELECT id FROM empresas WHERE doc_tipo='RUC' AND doc_numero='00000000000')
-    WHERE empresa_id IS NULL AND rol NOT IN ('superadmin','asesor')""",
+    WHERE empresa_id IS NULL AND rol NOT IN ('superadmin','asesor','ejecutivo')""",
     # ---------- Catálogo configurable (Fase 2A) ----------
     "ALTER TABLE planes ADD COLUMN IF NOT EXISTS subtitulo TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE planes ADD COLUMN IF NOT EXISTS destacado INTEGER NOT NULL DEFAULT 0",
@@ -582,6 +582,31 @@ PASOS = [
             "CREATE INDEX IF NOT EXISTS ix_crm_leads_fb ON crm_leads (fb_psid) WHERE fb_psid IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS ix_crm_leads_ig ON crm_leads (ig_id) WHERE ig_id IS NOT NULL",
             "ALTER TABLE crm_mensajes ADD COLUMN IF NOT EXISTS canal TEXT NOT NULL DEFAULT 'whatsapp'",
+            # ---------- CRM: equipo de ventas (ejecutivos) ----------
+            """CREATE TABLE IF NOT EXISTS ejecutivos (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                correo TEXT NOT NULL DEFAULT '',
+                telefono TEXT NOT NULL DEFAULT '',
+                color TEXT NOT NULL DEFAULT '#0ea5e9',
+                activo INTEGER NOT NULL DEFAULT 1,
+                recibe_leads INTEGER NOT NULL DEFAULT 1,
+                usuario_id INTEGER UNIQUE REFERENCES usuarios(id) ON DELETE SET NULL,
+                asesor_id INTEGER UNIQUE REFERENCES asesores(id) ON DELETE SET NULL,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
+            "ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS ejecutivo_id INTEGER REFERENCES ejecutivos(id) ON DELETE SET NULL",
+            "CREATE INDEX IF NOT EXISTS ix_crm_leads_ejecutivo ON crm_leads (ejecutivo_id, estado)",
+            # Una sola vez: los asesores que ya tenían acceso o leads pasan a ser ejecutivos (siguen siendo asesores también)
+            """INSERT INTO ejecutivos (nombre, correo, color, activo, usuario_id, asesor_id)
+               SELECT a.nombre, a.correo, a.color, a.activo, a.usuario_id, a.id FROM asesores a
+                WHERE (a.usuario_id IS NOT NULL OR EXISTS (SELECT 1 FROM crm_leads l WHERE l.asesor_id = a.id))
+                  AND NOT EXISTS (SELECT 1 FROM configuracion WHERE clave='ejecutivos_migrado')
+               ON CONFLICT DO NOTHING""",
+            """UPDATE crm_leads l SET ejecutivo_id = e.id FROM ejecutivos e
+                WHERE e.asesor_id = l.asesor_id AND l.ejecutivo_id IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM configuracion WHERE clave='ejecutivos_migrado')""",
+            "INSERT INTO configuracion (clave, valor) VALUES ('ejecutivos_migrado','1') ON CONFLICT (clave) DO NOTHING",
             # Un aviso de lead de anuncio se procesa una sola vez, aunque Meta lo reintente
             """CREATE TABLE IF NOT EXISTS crm_leadgen_vistos (
                 leadgen_id TEXT PRIMARY KEY,

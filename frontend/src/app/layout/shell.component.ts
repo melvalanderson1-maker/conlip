@@ -22,7 +22,7 @@ const MENU = [
   { ruta: 'asignaciones', label: 'Mis asignaciones', permiso: 'cotizar' },
 ];
 const ROLES: Record<string, string> = {
-  superadmin: 'Superadmin', admin: 'Administrador', cotizador: 'Cotizador', visualizador: 'Visualizador', asesor: 'Asesor',
+  superadmin: 'Superadmin', admin: 'Administrador', cotizador: 'Cotizador', visualizador: 'Visualizador', asesor: 'Asesor', ejecutivo: 'Ejecutivo de ventas',
 };
 
 @Component({
@@ -33,6 +33,9 @@ const ROLES: Record<string, string> = {
     <header class="top">
       <div class="brand"><span class="logo">C</span><b>COTI</b></div>
       <nav class="modulos">
+        @if ((auth.esEjecutivo() || auth.esAsesor()) && crm.activo()) {
+          <button type="button" class="mod" [class.on]="enMiCrm()" (click)="irMiCrm()">Mi CRM</button>
+        }
         @if (auth.esAsesor()) {
           <button type="button" class="mod" [class.on]="enMiAgenda()" (click)="irMiAgenda()">Mi agenda</button>
         }
@@ -187,6 +190,7 @@ export class ShellComponent implements OnInit {
   readonly enAvisos = computed<boolean>(() => this.seccion() === 'avisos-admin');
   readonly enVentas = computed<boolean>(() => this.seccion() === 'ventas-admin');
   readonly enCrm = computed<boolean>(() => this.seccion() === 'crm-admin');
+  readonly enMiCrm = computed<boolean>(() => this.seccion() === 'mi-crm');
   readonly enSeguridad = computed<boolean>(() => this.seccion() === 'seguridad');
   /** Dentro de un curso el menú lateral se oculta para dar espacio al reproductor. */
   readonly enReproductor = computed<boolean>(() => {
@@ -229,6 +233,7 @@ export class ShellComponent implements OnInit {
   irAvisos(): void { this.router.navigate(['/avisos-admin']); }
   irVentas(): void { this.router.navigate(['/ventas-admin']); }
   irCrm(): void { this.router.navigate(['/crm-admin']); }
+  irMiCrm(): void { this.router.navigate(['/mi-crm']); }
   irSeguridad(): void { this.router.navigate(['/seguridad']); }
   irCuenta(): void { this.router.navigate(['/cuenta']); }
 

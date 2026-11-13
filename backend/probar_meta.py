@@ -9,7 +9,7 @@ import urllib.request
 url, secreto, page_id = sys.argv[1], sys.argv[2], sys.argv[3]
 ahora = int(time.time() * 1000)
 payload = {
-    "object": "page",
+    "object": "instagram",
     "entry": [{
         "id": page_id, "time": ahora,
         "messaging": [{

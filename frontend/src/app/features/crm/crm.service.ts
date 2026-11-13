@@ -17,7 +17,7 @@ export interface Lead {
 }
 export interface Actividad {
   id: number; tipo: TipoActividad; contenido: string; usuario: string; programada_en: string | null;
-  completada_en: string | null; creado_en: string;
+  completada_en: string | null; creado_en: string;  
 }
 export interface LeadDetalle extends Lead {
   doc_tipo: string; doc_numero: string; motivo_perdida: string; orden_id: string | null; creado_por: string; actividades: Actividad[];
@@ -27,6 +27,12 @@ export interface Resumen {
   por_etapa: Record<string, { n: number; valor: number }>;
 }
 export interface AsesorCrm { id: number; nombre: string; color: string; leads: number; }
+export interface Ejecutivo {
+  id: number; nombre: string; correo: string; telefono: string; color: string; activo: boolean; recibe_leads: boolean;
+  usuario_id: number | null; asesor_id: number | null; asesor_nombre: string | null;
+  leads_abiertos: number; ganados_mes: number; tiene_acceso: boolean;
+}
+export interface AsesorLibre { id: number; nombre: string; }
 export interface ConfigCrm { reparto: 'manual' | 'rotativo'; etapas: Etapa[]; }
 export interface ResultadoImport { creados: number; duplicados: number; invalidos: number; errores: string[]; }
 export interface FiltroLeads { estado: string; q: string; asesor_id: number | null; vencidos: boolean; limite: number; desde: number; }
@@ -57,6 +63,18 @@ export class CrmService {
   borrar(id: number): Observable<unknown> { return this.http.delete(`${BASE}/leads/${id}`); }
   importar(filas: Record<string, string>[]): Observable<ResultadoImport> { return this.http.post<ResultadoImport>(`${BASE}/importar`, { filas }); }
   config(): Observable<ConfigCrm> { return this.http.get<ConfigCrm>(`${BASE}/admin/config`); }
+
+  // Equipo de ventas (ejecutivos): solo superadmin
+  ejecutivos(): Observable<Ejecutivo[]> { return this.http.get<Ejecutivo[]>(`${BASE}/ejecutivos`); }
+  asesoresLibres(): Observable<AsesorLibre[]> { return this.http.get<AsesorLibre[]>(`${BASE}/ejecutivos/asesores-libres`); }
+  crearEjecutivo(d: Record<string, unknown>): Observable<{ id: number }> { return this.http.post<{ id: number }>(`${BASE}/ejecutivos`, d); }
+  editarEjecutivo(id: number, d: Record<string, unknown>): Observable<unknown> { return this.http.patch(`${BASE}/ejecutivos/${id}`, d); }
+  borrarEjecutivo(id: number): Observable<unknown> { return this.http.delete(`${BASE}/ejecutivos/${id}`); }
+  traspasar(id: number, a_ejecutivo_id: number | null): Observable<{ ok: boolean; traspasados: number }> {
+    return this.http.post<{ ok: boolean; traspasados: number }>(`${BASE}/ejecutivos/${id}/traspasar`, { a_ejecutivo_id });
+  }
+  darAccesoEjecutivo(id: number): Observable<unknown> { return this.http.post(`${BASE}/ejecutivos/${id}/acceso`, {}); }
+  quitarAccesoEjecutivo(id: number): Observable<unknown> { return this.http.delete(`${BASE}/ejecutivos/${id}/acceso`); }
   guardarConfig(d: Record<string, unknown>): Observable<unknown> { return this.http.put(`${BASE}/admin/config`, d); }
 }
 

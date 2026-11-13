@@ -55,7 +55,7 @@ const TIPOS: { id: Exclude<TipoActividad, 'sistema'>; label: string; icono: stri
                 </select>
               </label>
               @if (esAdmin()) {
-                <label>Asesor
+                <label>Ejecutivo de ventas
                   <select (change)="asignar($any($event.target).value)">
                     <option value="" [selected]="l.asesor_id === null">Sin asignar</option>
                     @for (a of asesores(); track a.id) { <option [value]="a.id" [selected]="a.id === l.asesor_id">{{ a.nombre }}</option> }

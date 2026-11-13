@@ -133,6 +133,8 @@ def calcular_permisos(rol: str, tipo_empresa: str | None, guardados: list[str], 
         return [p for p in CATALOGO if not p.endswith(":cotizar")] + EXTRA_SUPERADMIN
     if rol == "asesor":  # no pertenece a una empresa: solo entra a su propia agenda
         return ["agenda:asesor"]
+    if rol == "ejecutivo":  # solo entra al CRM; el permiso crm:ejecutivo se suma en cargar_usuario
+        return []
     permitidos = permisos_permitidos(rol, tipo_empresa or "", subs)
     if rol == "admin":
         return sorted(permitidos) + ["usuarios:gestionar"]
@@ -152,15 +154,21 @@ def cargar_usuario(uid: int) -> dict:
             raise HTTPException(401, "Sesión inválida o vencida")
         d = dict(u)
         subs: list[tuple[str, str]] = []
-        if d["rol"] not in ("superadmin", "asesor"):
+        es_ejecutivo = False
+        if d["rol"] not in ("superadmin", "asesor", "ejecutivo"):
             if d["empresa_id"] is None or not d["empresa_activa"]:
                 raise HTTPException(401, "Cuenta suspendida. Contacta a soporte.")
             subs = suscripciones_activas(con, d["empresa_id"])
+        if d["rol"] in ("asesor", "ejecutivo"):
+            es_ejecutivo = con.execute(
+                "SELECT 1 FROM ejecutivos WHERE usuario_id=? AND activo=1", (uid,)).fetchone() is not None
     finally:
         con.close()
     guardados = list(d["permisos"] or [])
     d["permisos_guardados"] = guardados
     d["permisos"] = calcular_permisos(d["rol"], d["empresa_tipo"], guardados, subs)
+    if es_ejecutivo:
+        d["permisos"] = [*d["permisos"], "crm:ejecutivo"]
     return d
 
 

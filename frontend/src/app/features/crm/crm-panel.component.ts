@@ -94,8 +94,8 @@ function leerCsv(texto: string): Record<string, string>[] {
       <div class="filtros">
         <input class="buscar" type="search" placeholder="Buscar por nombre, empresa, correo o teléfono" [value]="q()" (input)="buscar($any($event.target).value)" />
         @if (esAdmin()) {
-          <select aria-label="Filtrar por asesor" (change)="filtrarAsesor($any($event.target).value)">
-            <option value="" [selected]="fAsesor() === null">Todos los asesores</option>
+          <select aria-label="Filtrar por ejecutivo" (change)="filtrarAsesor($any($event.target).value)">
+            <option value="" [selected]="fAsesor() === null">Todos los ejecutivos</option>
             <option value="0" [selected]="fAsesor() === 0">Sin asignar</option>
             @for (a of asesores(); track a.id) { <option [value]="a.id" [selected]="fAsesor() === a.id">{{ a.nombre }} ({{ a.leads }})</option> }
           </select>
@@ -137,7 +137,7 @@ function leerCsv(texto: string): Record<string, string>[] {
       @case ('lista') {
         <div class="tabla-wrap">
           <table class="tabla">
-            <thead><tr><th>Lead</th><th>Contacto</th><th>Etapa</th><th>Origen</th>@if (esAdmin()) { <th>Asesor</th> }<th>Valor</th><th>Próxima acción</th></tr></thead>
+            <thead><tr><th>Lead</th><th>Contacto</th><th>Etapa</th><th>Origen</th>@if (esAdmin()) { <th>Ejecutivo</th> }<th>Valor</th><th>Próxima acción</th></tr></thead>
             <tbody>
               @for (l of abiertos(); track l.id) {
                 <tr class="fila-click" (click)="abrir(l.id)">
@@ -164,7 +164,7 @@ function leerCsv(texto: string): Record<string, string>[] {
             <h3>Reparto de leads nuevos</h3>
             <div class="modos">
               <button type="button" class="modo" [class.on]="reparto() === 'manual'" (click)="reparto.set('manual')"><b>Manual</b><small>Llegan «sin asignar» y tú los repartes.</small></button>
-              <button type="button" class="modo" [class.on]="reparto() === 'rotativo'" (click)="reparto.set('rotativo')"><b>Rotativo</b><small>Cada lead nuevo va al siguiente asesor activo con acceso a la plataforma.</small></button>
+              <button type="button" class="modo" [class.on]="reparto() === 'rotativo'" (click)="reparto.set('rotativo')"><b>Rotativo</b><small>Cada lead nuevo va al siguiente ejecutivo de ventas activo con acceso al CRM y con el reparto encendido.</small></button>
             </div>
           </section>
           <section class="card">
@@ -221,7 +221,7 @@ function leerCsv(texto: string): Record<string, string>[] {
             <label>Interés <input placeholder="Qué busca" [value]="nl().interes" (input)="campoNuevo('interes', $any($event.target).value)" /></label>
             <label>Valor estimado (S/) <input type="number" min="0" [value]="nl().valor_estimado" (input)="campoNuevo('valor_estimado', $any($event.target).value)" /></label>
             @if (esAdmin()) {
-              <label>Asesor
+              <label>Ejecutivo
                 <select (change)="campoNuevo('asesor_id', $any($event.target).value)">
                   <option value="">Según el reparto</option>
                   @for (a of asesores(); track a.id) { <option [value]="a.id">{{ a.nombre }}</option> }

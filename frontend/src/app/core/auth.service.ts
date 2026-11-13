@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { API } from './api';
 
-export type Rol = 'superadmin' | 'admin' | 'cotizador' | 'visualizador' | 'asesor';
+export type Rol = 'superadmin' | 'admin' | 'cotizador' | 'visualizador' | 'asesor' | 'ejecutivo';
 export interface UsuarioSesion {
   id: number; usuario: string; nombre: string; rol: Rol; permisos: string[];
   empresa: { id: number; nombre: string; tipo: 'empresa' | 'persona' } | null;
@@ -32,6 +32,7 @@ export class AuthService {
   readonly esAdmin = computed<boolean>(() => this.usuario()?.rol === 'admin');
   readonly esSuperadmin = computed<boolean>(() => this.usuario()?.rol === 'superadmin');
   readonly esAsesor = computed<boolean>(() => this.usuario()?.rol === 'asesor');
+  readonly esEjecutivo = computed<boolean>(() => this.usuario()?.rol === 'ejecutivo');
   /** Titular: admin de una empresa o persona natural dueña de su cuenta. */
   readonly esTitular = computed<boolean>(() => {
     const u = this.usuario();
@@ -49,6 +50,7 @@ export class AuthService {
     if (this.usuario()?.debe_activar_2fa) return ['/seguridad'];
     if (this.esSuperadmin()) return ['/plataforma'];
     if (this.esAsesor()) return ['/mi-agenda'];
+    if (this.esEjecutivo()) return ['/mi-crm'];
     const m = MODULOS_ORDEN.find((x) => this.puede(`${x}:ver`));
     return m ? ['/', m] : null;
   }

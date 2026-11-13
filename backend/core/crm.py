@@ -70,7 +70,7 @@ def siguiente_asesor(con) -> int | None:
     if not cfg or cfg["valor"] != "rotativo":
         return None
     ids = [r["id"] for r in con.execute(
-        "SELECT id FROM asesores WHERE activo=1 AND usuario_id IS NOT NULL ORDER BY id").fetchall()]
+        "SELECT id FROM ejecutivos WHERE activo=1 AND recibe_leads=1 AND usuario_id IS NOT NULL ORDER BY id").fetchall()]
     if not ids:
         return None
     ult = con.execute("SELECT valor FROM configuracion WHERE clave='crm_ultimo_asesor'").fetchone()
@@ -102,7 +102,7 @@ def captar_lead(con, *, nombre: str, correo: str = "", telefono: str = "", empre
         asesor_id = siguiente_asesor(con)
     lid = con.execute(
         "INSERT INTO crm_leads (nombre, empresa_nombre, correo, telefono, doc_tipo, doc_numero, origen, interes, "
-        "valor_estimado, etapa_id, asesor_id, orden_id, creado_por, ultimo_contacto_en) "
+        "valor_estimado, etapa_id, ejecutivo_id, orden_id, creado_por, ultimo_contacto_en) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, now()) RETURNING id",
         (nombre.strip()[:120], empresa.strip()[:160], correo, tel, doc_tipo[:10], doc_numero.strip()[:20], origen,
          interes.strip()[:300], valor, etapa["id"], asesor_id, orden_id, creado_por)).fetchone()[0]
@@ -115,7 +115,7 @@ def avisar_lead(lead_id: int, usuarios_extra: list[int] | None = None) -> None:
     con = abrir_db()
     try:
         r = con.execute(
-            "SELECT a.usuario_id FROM crm_leads l LEFT JOIN asesores a ON a.id = l.asesor_id WHERE l.id=?", (lead_id,)).fetchone()
+            "SELECT e.usuario_id FROM crm_leads l LEFT JOIN ejecutivos e ON e.id = l.ejecutivo_id WHERE l.id=?", (lead_id,)).fetchone()
     finally:
         con.close()
     a_superadmins({"tipo": "crm"})
