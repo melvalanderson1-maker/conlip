@@ -1,6 +1,6 @@
 import { Route, Routes } from '@angular/router';
 import {
-  adminGuard, asesorGuard, authGuard, inicioGuard, permisoGuard, soloVisitante, superadminGuard, titularGuard,
+  adminGuard, asesorGuard, authGuard, ejecutivoGuard, inicioGuard, permisoGuard, soloVisitante, superadminGuard, titularGuard,
 } from './core/auth.guard';
 
 const proximamente = () => import('./shared/proximamente.component').then((m) => m.ProximamenteComponent);
@@ -153,6 +153,11 @@ export const routes: Routes = [
         path: 'crm-admin',
         canActivate: [superadminGuard],
         loadComponent: () => import('./features/crm/crm-admin.page').then((m) => m.CrmAdminPage),
+      },
+      {
+        path: 'mi-crm',
+        canActivate: [ejecutivoGuard],
+        loadComponent: () => import('./features/crm/crm-ejecutivo.page').then((m) => m.CrmEjecutivoPage),
       },
       {
         path: 'ventas-admin',
