@@ -24,7 +24,6 @@ export const adminGuard: CanActivateFn = () => {
 export const inicioGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  console.log('inicioGuard', auth.usuario()?.rol, auth.primeraRuta());
   return router.createUrlTree(auth.primeraRuta() ?? ['/sin-acceso']);
 };
 
@@ -60,6 +59,5 @@ export const asesorGuard: CanActivateFn = () => {
 export const ejecutivoGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  console.log('ejecutivoGuard', auth.usuario()?.rol, auth.esEjecutivo(), auth.esAsesor());
   return auth.esEjecutivo() || auth.esAsesor() ? true : router.createUrlTree(['/']);
 };

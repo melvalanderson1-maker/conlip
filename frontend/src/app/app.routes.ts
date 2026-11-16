@@ -67,6 +67,10 @@ export const routes: Routes = [
     loadComponent: () => import('./features/publico/solicitud.page').then((m) => m.SolicitudPage),
   },
   {
+    path: 'contacto',
+    loadComponent: () => import('./features/publico/contacto.page').then((m) => m.ContactoPage),
+  },
+  {
     path: 'crear-clave',
     loadComponent: () => import('./features/publico/crear-clave.page').then((m) => m.CrearClavePage),
   },
