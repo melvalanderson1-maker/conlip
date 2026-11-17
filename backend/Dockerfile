@@ -23,7 +23,7 @@ RUN if [ "$INSTALAR_NAVEGADOR" = "1" ]; then python -m playwright install chromi
 COPY . .
 
 RUN useradd -m -u 1000 app \
-    && mkdir -p /app/storage/aprende \
+    && mkdir -p /app/storage/aprende /app/storage/crm \
     && chown -R app:app /app
 USER app
 

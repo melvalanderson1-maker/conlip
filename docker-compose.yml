@@ -9,6 +9,7 @@ services:
       ENTORNO: prod
       TRUST_PROXY: "1"
       APRENDE_DIR: /app/storage/aprende
+      CRM_MEDIA_DIR: /app/storage/crm
       SEACE_VER: "1"
       SEACE_HEADLESS: "true"
       MAYOR_REFRESCO_PARALELO: "3"
@@ -17,7 +18,7 @@ services:
       SMTP_HOST: smtp.gmail.com
       SMTP_PORT: "587"
       SMTP_SEGURIDAD: starttls
-      EXIGIR_2FA: superadmin
+      EXIGIR_2FA: superadmin,ejecutivo
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
       SECRETS_KEY: ${SECRETS_KEY}
@@ -32,6 +33,7 @@ services:
       FRONTEND_URL: ${FRONTEND_URL}
     volumes:
       - aprende:/app/storage/aprende
+      - crm_media:/app/storage/crm
     expose:
       - "8000"
     healthcheck:
@@ -55,9 +57,11 @@ services:
     restart: unless-stopped
     volumes:
       - aprende:/datos:ro
+      - crm_media:/datos_crm:ro
       - respaldos:/respaldos
-    command: ["sh", "-c", "while true; do tar czf /respaldos/aprende-$$(date +%F).tgz -C /datos . ; find /respaldos -name 'aprende-*.tgz' -mtime +14 -delete ; sleep 86400; done"]
+    command: ["sh", "-c", "while true; do tar czf /respaldos/aprende-$$(date +%F).tgz -C /datos . ; tar czf /respaldos/crm-$$(date +%F).tgz -C /datos_crm . ; find /respaldos -name 'aprende-*.tgz' -mtime +14 -delete ; find /respaldos -name 'crm-*.tgz' -mtime +14 -delete ; sleep 86400; done"]
 
 volumes:
   aprende:
   respaldos:
+  crm_media:
