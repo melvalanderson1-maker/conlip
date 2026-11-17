@@ -634,6 +634,47 @@ PASOS = [
                 token TEXT NOT NULL,
                 creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
             )""",
+# ---------- CRM: automatizaciones (flujos de nodos) ----------
+            "ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS bot_pausado_hasta TIMESTAMPTZ",
+            """CREATE TABLE IF NOT EXISTS crm_flujos (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                canal TEXT NOT NULL CHECK (canal IN ('whatsapp','facebook','instagram')),
+                canal_id INTEGER REFERENCES crm_canales(id) ON DELETE SET NULL,
+                estado TEXT NOT NULL DEFAULT 'borrador' CHECK (estado IN ('borrador','publicado')),
+                definicion JSONB NOT NULL DEFAULT '{"nodos":[],"conexiones":[]}'::jsonb,
+                publicada JSONB,
+                version INTEGER NOT NULL DEFAULT 0,
+                publicado_en TIMESTAMPTZ,
+                creado_por TEXT NOT NULL DEFAULT '',
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+                actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
+            """CREATE TABLE IF NOT EXISTS crm_flujo_ejecuciones (
+                id BIGSERIAL PRIMARY KEY,
+                flujo_id INTEGER NOT NULL REFERENCES crm_flujos(id) ON DELETE CASCADE,
+                lead_id BIGINT NOT NULL REFERENCES crm_leads(id) ON DELETE CASCADE,
+                estado TEXT NOT NULL DEFAULT 'activa' CHECK (estado IN
+                    ('activa','procesando','esperando','esperando_respuesta','completada','error','cancelada')),
+                nodo_actual TEXT NOT NULL,
+                siguiente_en TIMESTAMPTZ,
+                contexto JSONB NOT NULL DEFAULT '{}'::jsonb,
+                error TEXT NOT NULL DEFAULT '',
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+                actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_ejec_pendientes ON crm_flujo_ejecuciones (siguiente_en) WHERE estado IN ('activa','esperando','esperando_respuesta')",
+            "CREATE INDEX IF NOT EXISTS ix_ejec_lead ON crm_flujo_ejecuciones (lead_id, flujo_id, creado_en DESC)",
+            """CREATE TABLE IF NOT EXISTS crm_flujo_registros (
+                id BIGSERIAL PRIMARY KEY,
+                ejecucion_id BIGINT NOT NULL REFERENCES crm_flujo_ejecuciones(id) ON DELETE CASCADE,
+                nodo_id TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                salida TEXT NOT NULL DEFAULT '',
+                detalle TEXT NOT NULL DEFAULT '',
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_reg_ejec ON crm_flujo_registros (ejecucion_id, id)",
             # ---------- CRM: formularios web configurables ----------
             """CREATE TABLE IF NOT EXISTS crm_formularios (
                 id SERIAL PRIMARY KEY,

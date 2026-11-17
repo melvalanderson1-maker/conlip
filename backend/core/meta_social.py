@@ -332,6 +332,7 @@ def procesar(payload: dict) -> dict:
         return cuenta
 
     avisar: set[int] = set()
+    nuevos: set[int] = set()  # solo mensajes nuevos: son los que activan automatizaciones
     con = abrir_db()
     try:
         for entrada in payload.get("entry", []):
@@ -344,7 +345,7 @@ def procesar(payload: dict) -> dict:
                 try:
                     lid = _recibir(con, canal, ev, propio, canal_id)
                     if lid:
-                        avisar.add(lid); cuenta["mensajes"] += 1
+                        avisar.add(lid); nuevos.add(lid); cuenta["mensajes"] += 1
                 except Exception:
                     logger.exception("No se pudo guardar un mensaje de %s", canal)
                     cuenta["fallos"] += 1
@@ -366,6 +367,8 @@ def procesar(payload: dict) -> dict:
         con.close()
     for lid in avisar:
         avisar_lead(lid)  # tiempo real
+    from core import automatizaciones as au  # importación tardía: evita un ciclo entre módulos
+    au.despues_de_recibir(nuevos)
     return cuenta
 
 

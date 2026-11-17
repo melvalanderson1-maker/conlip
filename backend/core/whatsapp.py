@@ -287,6 +287,7 @@ def procesar(payload: dict) -> dict:
         return cuenta
 
     avisar: set[int] = set()
+    nuevos: set[int] = set()  # solo mensajes nuevos (no cambios de estado): son los que activan automatizaciones
     con = abrir_db()
     try:
         for entrada in payload.get("entry", []):
@@ -301,7 +302,7 @@ def procesar(payload: dict) -> dict:
                 for m in v.get("messages", []):
                     lid = _recibir(con, m, nombres, canal["id"])
                     if lid:
-                        avisar.add(lid); cuenta["mensajes"] += 1
+                        avisar.add(lid); nuevos.add(lid); cuenta["mensajes"] += 1
                 for s in v.get("statuses", []):
                     lid = _estado(con, s)
                     if lid:
@@ -313,4 +314,6 @@ def procesar(payload: dict) -> dict:
         con.close()
     for lid in avisar:
         avisar_lead(lid)  # tiempo real: la ficha y el tablero se actualizan solos
+    from core import automatizaciones as au  # importación tardía: evita un ciclo entre módulos
+    au.despues_de_recibir(nuevos)
     return cuenta

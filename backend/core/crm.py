@@ -107,6 +107,11 @@ def captar_lead(con, *, nombre: str, correo: str = "", telefono: str = "", empre
         (nombre.strip()[:120], empresa.strip()[:160], correo, tel, doc_tipo[:10], doc_numero.strip()[:20], origen,
          interes.strip()[:300], valor, etapa["id"], asesor_id, orden_id, creado_por)).fetchone()[0]
     registrar(con, lid, "sistema", f"Lead creado desde {NOMBRES_ORIGEN.get(origen, origen)}", creado_por)
+    try:
+        from core import automatizaciones as au  # importación tardía: evita un ciclo entre módulos
+        au.al_crear_lead(con, lid, origen)
+    except Exception:
+        logger.exception("No se pudieron programar las automatizaciones del lead %s", lid)
     return lid, True
 
 

@@ -15,6 +15,7 @@ from core.db import abrir_db
 from core.difusion import por_cambio
 from core.recordatorios import bucle as bucle_recordatorios
 from core.vencimientos import bucle as bucle_vencimientos
+from core.automatizaciones import bucle as bucle_automatizaciones
 from core.tiempo_real import gestor
 from modules.auth.router import router as auth_router
 from modules.auth.doblefactor import router as doblefactor_router
@@ -46,6 +47,7 @@ from modules.crm.formularios import router_admin as formularios_admin_router
 from modules.crm.formularios import router_publico as formularios_publico_router
 from modules.crm.canales import router as canales_router
 from modules.crm.canales import router_callback as canales_callback_router
+from modules.crm.automatizaciones import router as automatizaciones_router
 from modules.agenda.cliente import router as agenda_cliente_router
 from modules.agenda.integraciones import router as integraciones_router
 from modules.agenda.integraciones import router_callback as integraciones_callback_router
@@ -72,6 +74,8 @@ async def lifespan(app: FastAPI):
     iniciar_auth()
     sembrar_catalogo()
     threading.Thread(target=bucle_vencimientos, daemon=True).start()  # se activa o apaga desde el panel Avisos
+    if os.getenv("AUTOMATIZACIONES", "1") == "1":  # con AUTOMATIZACIONES=0 los flujos no avanzan
+        threading.Thread(target=bucle_automatizaciones, daemon=True, name="automatizaciones").start()
     if os.getenv("RECORDATORIOS", "1") == "1":
         threading.Thread(target=bucle_recordatorios, daemon=True).start()
     if os.getenv("SCRAPER", "1") == "1":
@@ -200,6 +204,7 @@ app.include_router(formularios_admin_router)
 app.include_router(formularios_publico_router)
 app.include_router(canales_router)
 app.include_router(canales_callback_router)
+app.include_router(automatizaciones_router)
 app.include_router(agenda_cliente_router)
 app.include_router(integraciones_router)
 app.include_router(integraciones_callback_router)

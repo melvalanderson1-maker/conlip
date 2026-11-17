@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from core import automatizaciones as au
 from core import canales as cn
 from core import meta_social as ms
 from core import whatsapp as wa
@@ -128,6 +129,7 @@ def _guardar_salida(con, lid: int, wamid: str, tipo: str, texto: str, usuario: s
         (lid, wamid, tipo, texto, usuario, canal_id))
     con.execute(
         "UPDATE crm_leads SET wa_no_leidos=0, ultimo_contacto_en=now(), actualizado_en=now() WHERE id=?", (lid,))
+    au.pausar_por_humano(con, lid)  # una persona tomó la conversación: los flujos se detienen
 
 
 def _canales(l) -> list[dict]:
@@ -188,6 +190,7 @@ def enviar(lid: int, d: TextoIn, ctx: dict = Depends(contexto)):
             except wa.ErrorWa as e:
                 raise HTTPException(400, str(e))
             con.execute("UPDATE crm_leads SET wa_no_leidos=0 WHERE id=?", (lid,))
+            au.pausar_por_humano(con, lid)
     finally:
         con.close()
     avisar_lead(lid)
