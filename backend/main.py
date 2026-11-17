@@ -42,6 +42,10 @@ from modules.crm.whatsapp import router_admin_meta as crm_meta_admin_router
 from modules.crm.ejecutivos import router as router_ejecutivos
 from modules.publico.legal import router_publico as legal_publico_router
 from modules.publico.leads import router as leads_publicos_router
+from modules.crm.formularios import router_admin as formularios_admin_router
+from modules.crm.formularios import router_publico as formularios_publico_router
+from modules.crm.canales import router as canales_router
+from modules.crm.canales import router_callback as canales_callback_router
 from modules.agenda.cliente import router as agenda_cliente_router
 from modules.agenda.integraciones import router as integraciones_router
 from modules.agenda.integraciones import router_callback as integraciones_callback_router
@@ -192,6 +196,10 @@ app.include_router(crm_meta_admin_router)
 app.include_router(router_ejecutivos)
 app.include_router(legal_publico_router)
 app.include_router(leads_publicos_router)
+app.include_router(formularios_admin_router)
+app.include_router(formularios_publico_router)
+app.include_router(canales_router)
+app.include_router(canales_callback_router)
 app.include_router(agenda_cliente_router)
 app.include_router(integraciones_router)
 app.include_router(integraciones_callback_router)

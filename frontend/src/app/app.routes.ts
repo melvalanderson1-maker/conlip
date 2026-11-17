@@ -69,6 +69,11 @@ export const routes: Routes = [
   {
     path: 'contacto',
     loadComponent: () => import('./features/publico/contacto.page').then((m) => m.ContactoPage),
+    data: { slug: 'contacto' },
+  },
+  {
+    path: 'f/:slug',
+    loadComponent: () => import('./features/publico/contacto.page').then((m) => m.ContactoPage),
   },
   {
     path: 'crear-clave',

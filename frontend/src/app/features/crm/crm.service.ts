@@ -33,6 +33,16 @@ export interface Ejecutivo {
   leads_abiertos: number; ganados_mes: number; tiene_acceso: boolean;
 }
 export interface AsesorLibre { id: number; nombre: string; }
+export type TipoCampo = 'texto' | 'telefono' | 'correo' | 'numero' | 'area' | 'lista' | 'casilla';
+export type DestinoCampo = 'nombre' | 'telefono' | 'correo' | 'empresa' | 'interes' | 'valor' | 'nota';
+export interface CampoForm {
+  id: string; tipo: TipoCampo; etiqueta: string; requerido: boolean; destino: DestinoCampo; opciones: string[]; ayuda: string;
+}
+export interface Formulario {
+  id: number; slug: string; nombre: string; titulo: string; descripcion: string; boton: string;
+  exito_titulo: string; exito_mensaje: string; origen: string; ejecutivo_id: number | null; activo: boolean;
+  campos: CampoForm[]; url: string;
+}
 export interface ConfigCrm { reparto: 'manual' | 'rotativo'; etapas: Etapa[]; }
 export interface ResultadoImport { creados: number; duplicados: number; invalidos: number; errores: string[]; }
 export interface FiltroLeads { estado: string; q: string; asesor_id: number | null; vencidos: boolean; limite: number; desde: number; }
@@ -75,6 +85,12 @@ export class CrmService {
   }
   darAccesoEjecutivo(id: number): Observable<unknown> { return this.http.post(`${BASE}/ejecutivos/${id}/acceso`, {}); }
   quitarAccesoEjecutivo(id: number): Observable<unknown> { return this.http.delete(`${BASE}/ejecutivos/${id}/acceso`); }
+
+  // Formularios web (solo superadmin)
+  formularios(): Observable<Formulario[]> { return this.http.get<Formulario[]>(`${BASE}/formularios`); }
+  crearFormulario(d: Record<string, unknown>): Observable<{ id: number }> { return this.http.post<{ id: number }>(`${BASE}/formularios`, d); }
+  guardarFormulario(id: number, d: Record<string, unknown>): Observable<unknown> { return this.http.put(`${BASE}/formularios/${id}`, d); }
+  borrarFormulario(id: number): Observable<unknown> { return this.http.delete(`${BASE}/formularios/${id}`); }
   guardarConfig(d: Record<string, unknown>): Observable<unknown> { return this.http.put(`${BASE}/admin/config`, d); }
 }
 

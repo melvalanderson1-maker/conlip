@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from core import canales as cn
 from core.crm import avisar_lead, captar_lead, contacto_valido, registrar
 from core.db import abrir_db
 from core.secretos import leer
@@ -48,20 +49,37 @@ def traducir_error(codigo: int, subcodigo: int = 0, mensaje: str = "") -> str:
 
 # ---------------- Configuración (cifrada, se edita en el panel) ----------------
 def cfg() -> dict[str, str]:
-    return {
+    base = {
         "page_id": leer("meta_page_id"), "page_token": leer("meta_page_token"),
         "ig_id": leer("meta_ig_id"), "ig_token": leer("meta_ig_token"),
         "version": leer("wa_version") or VERSION_BASE,
     }
+    cid = cn.actual()
+    if cid is None:  # sin canal elegido: las credenciales de Conexiones (como siempre)
+        return base
+    con = abrir_db()
+    try:
+        c = cn.obtener(con, cid)
+    finally:
+        con.close()
+    if not c or c["tipo"] == "whatsapp" or c["estado"] == "desconectado":
+        raise ErrorWa("Ese canal ya no está conectado.")
+    tok = cn.token_de(c)
+    if c["tipo"] == "facebook":
+        return {**base, "page_id": c["ext_id"], "page_token": tok, "ig_id": "", "ig_token": ""}
+    if c["legado"]:  # Instagram de Conexiones: token propio de Instagram
+        return {**base, "ig_id": c["ext_id"], "ig_token": tok}
+    return {**base, "page_id": c["page_id"], "page_token": tok, "ig_id": c["ext_id"], "ig_token": ""}  # conectado por OAuth: usa el token de la página
 
 
 def configurado(canal: str | None = None) -> bool:
     c = cfg()
+    sin_contexto = cn.actual() is None
     if canal == "facebook":
-        return bool(c["page_id"] and c["page_token"])
+        return bool(c["page_id"] and c["page_token"]) or (sin_contexto and cn.hay_activos("facebook"))
     if canal == "instagram":
-        # Instagram usa su propio token; si no hay, intenta con el de la página (por compatibilidad)
-        return bool(c["ig_id"] and (c["ig_token"] or (c["page_id"] and c["page_token"])))
+        # Instagram usa su propio token; si no hay, intenta con el de la página
+        return bool(c["ig_id"] and (c["ig_token"] or (c["page_id"] and c["page_token"]))) or (sin_contexto and cn.hay_activos("instagram"))
     return configurado("facebook") or configurado("instagram")
 
 
@@ -98,6 +116,8 @@ def _graph(metodo: str, ruta: str, cuerpo: dict | None = None, consulta: dict | 
             err = {}
         logger.warning("Meta rechazó %s %s: %s", metodo, ruta,
                        {k: err.get(k) for k in ("code", "error_subcode", "message")})
+        if int(err.get("code", 0) or 0) == 190:
+            cn.marcar(cn.actual(), "error", "El token venció o no es válido. Vuelve a conectar este canal.")
         raise ErrorWa(traducir_error(err.get("code", 0), err.get("error_subcode", 0), err.get("message", "")))
     except Exception as e:
         logger.error("No se pudo contactar a Meta: %s", e)
@@ -130,7 +150,7 @@ def suscribir_pagina() -> bool:
     r = _graph(
         "POST",
         f"/{c['page_id']}/subscribed_apps",
-        consulta={"subscribed_fields": "messages"}
+        consulta={"subscribed_fields": "messages,leadgen"}
     )
 
     if not r.get("success"):
@@ -153,7 +173,7 @@ def enviar(canal: str, destinatario: str, texto: str) -> str:
     """Envía un texto por Messenger o Instagram. Devuelve el id del mensaje."""
     c = _obligatoria(canal)
     if canal == "instagram":
-        r = _graph("POST", f"/{c['ig_id']}/messages",
+        r = _graph("POST", f"/{c['ig_id'] if c['ig_token'] else c['page_id']}/messages",
                    {"recipient": {"id": destinatario}, "message": {"text": texto}}, canal="instagram")
     else:
         r = _graph("POST", f"/{c['page_id']}/messages",
@@ -171,11 +191,13 @@ def enviar_a_lead(con, lead_id: int, canal: str, texto: str, usuario: str) -> in
         raise ErrorWa(f"Este lead no tiene conversación por {NOMBRE_CANAL[canal]}.")
     if not dentro_de_ventana(lead["ult"]):
         raise ErrorWa(MSG_VENTANA)
-    mid = enviar(canal, lead["cid"], texto)
+    canal_id = cn.para_responder(con, lead_id, canal)
+    with cn.usando(canal_id):
+        mid = enviar(canal, lead["cid"], texto)
     mensaje_id = con.execute(
-        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, estado, enviado_por, canal) "
-        "VALUES (?, 'out', ?, 'text', ?, 'enviado', ?, ?) ON CONFLICT DO NOTHING RETURNING id",
-        (lead_id, mid, texto, usuario, canal)).fetchone()
+        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, estado, enviado_por, canal, canal_id) "
+        "VALUES (?, 'out', ?, 'text', ?, 'enviado', ?, ?, ?) ON CONFLICT DO NOTHING RETURNING id",
+        (lead_id, mid, texto, usuario, canal, canal_id)).fetchone()
     con.execute("UPDATE crm_leads SET ultimo_contacto_en=now(), actualizado_en=now() WHERE id=?", (lead_id,))
     return mensaje_id[0] if mensaje_id else 0
 
@@ -222,7 +244,7 @@ def _contenido(m: dict) -> tuple[str, str, str | None] | None:
     return tipo, texto, url
 
 
-def _recibir(con, canal: str, ev: dict, propio: str) -> int | None:
+def _recibir(con, canal: str, ev: dict, propio: str, canal_id: int | None = None) -> int | None:
     m = ev.get("message") or {}
     mid = m.get("mid")
     de = str((ev.get("sender") or {}).get("id") or "")
@@ -242,14 +264,15 @@ def _recibir(con, canal: str, ev: dict, propio: str) -> int | None:
     if lead:
         lid = lead["id"]
     else:
-        nombre = nombre_perfil(canal, de) or f"{NOMBRE_CANAL[canal]} {de[-4:]}"
+        with cn.usando(canal_id):
+            nombre = nombre_perfil(canal, de) or f"{NOMBRE_CANAL[canal]} {de[-4:]}"
         lid, _ = captar_lead(con, nombre=nombre, origen=canal, interes=(texto or "")[:80])
         con.execute(f"UPDATE crm_leads SET {col_id}=? WHERE id=?", (de, lid))
     # Si Meta reintenta el aviso, el índice único del id del mensaje lo detecta y no se cuenta dos veces
     nuevo = con.execute(
-        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, media_id, estado, creado_en, canal) "
-        "VALUES (?, 'in', ?, ?, ?, ?, 'recibido', ?, ?) ON CONFLICT DO NOTHING RETURNING id",
-        (lid, mid, tipo, texto, url, ts, canal)).fetchone()
+        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, media_id, estado, creado_en, canal, canal_id) "
+        "VALUES (?, 'in', ?, ?, ?, ?, 'recibido', ?, ?, ?) ON CONFLICT DO NOTHING RETURNING id",
+        (lid, mid, tipo, texto, url, ts, canal, canal_id)).fetchone()
     if not nuevo:
         return None
     con.execute(
@@ -261,7 +284,7 @@ def _recibir(con, canal: str, ev: dict, propio: str) -> int | None:
 _CAMPOS_BASICOS = {"full_name", "first_name", "last_name", "email", "phone_number", "company_name"}
 
 
-def _leadgen(con, v: dict) -> int | None:
+def _leadgen(con, v: dict, canal_id: int | None = None) -> int | None:
     """Lead de un formulario instantáneo de Facebook: Meta avisa con un id y hay que pedir los datos."""
     lg = str(v.get("leadgen_id") or "")
     if not lg:
@@ -271,7 +294,8 @@ def _leadgen(con, v: dict) -> int | None:
     if not nuevo:
         return None  # aviso repetido
     try:
-        d = _graph("GET", f"/{lg}", consulta={"fields": "field_data,ad_name,form_id,created_time"})
+        with cn.usando(canal_id):
+            d = _graph("GET", f"/{lg}", consulta={"fields": "field_data,ad_name,form_id,created_time"})
     except ErrorWa:
         con.execute("DELETE FROM crm_leadgen_vistos WHERE leadgen_id=?", (lg,))  # que el reintento de Meta lo vuelva a procesar
         raise
@@ -306,20 +330,19 @@ def procesar(payload: dict) -> dict:
     canal = {"page": "facebook", "instagram": "instagram"}.get(payload.get("object", ""))
     if not canal:
         return cuenta
-    c = cfg()
-    propio = c["ig_id"] if canal == "instagram" else c["page_id"]
-    if not propio:
-        return cuenta
+
     avisar: set[int] = set()
     con = abrir_db()
     try:
         for entrada in payload.get("entry", []):
-            if str(entrada.get("id")) != propio:
-                logger.warning("Aviso ignorado: el id %s no coincide con el configurado (%s)", entrada.get("id"), propio)
+            fila = cn.buscar(con, canal, str(entrada.get("id")))
+            if not fila:
+                logger.warning("Aviso ignorado: el id %s no es de ningún canal conectado", entrada.get("id"))
                 continue
+            propio, canal_id = fila["ext_id"], fila["id"]
             for ev in entrada.get("messaging", []):
                 try:
-                    lid = _recibir(con, canal, ev, propio)
+                    lid = _recibir(con, canal, ev, propio, canal_id)
                     if lid:
                         avisar.add(lid); cuenta["mensajes"] += 1
                 except Exception:
@@ -330,7 +353,7 @@ def procesar(payload: dict) -> dict:
                     if cambio.get("field") != "leadgen":
                         continue
                     try:
-                        lid = _leadgen(con, cambio.get("value") or {})
+                        lid = _leadgen(con, cambio.get("value") or {}, canal_id)
                         if lid:
                             avisar.add(lid); cuenta["leads"] += 1
                     except Exception:

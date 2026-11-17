@@ -607,6 +607,55 @@ PASOS = [
                 WHERE e.asesor_id = l.asesor_id AND l.ejecutivo_id IS NULL
                   AND NOT EXISTS (SELECT 1 FROM configuracion WHERE clave='ejecutivos_migrado')""",
             "INSERT INTO configuracion (clave, valor) VALUES ('ejecutivos_migrado','1') ON CONFLICT (clave) DO NOTHING",
+# ---------- CRM: canales conectados (varios números y cuentas) ----------
+            """CREATE TABLE IF NOT EXISTS crm_canales (
+                id SERIAL PRIMARY KEY,
+                tipo TEXT NOT NULL CHECK (tipo IN ('whatsapp','facebook','instagram')),
+                nombre TEXT NOT NULL,
+                ext_id TEXT NOT NULL,
+                waba_id TEXT NOT NULL DEFAULT '',
+                page_id TEXT NOT NULL DEFAULT '',
+                detalle TEXT NOT NULL DEFAULT '',
+                token TEXT NOT NULL DEFAULT '',
+                legado INTEGER NOT NULL DEFAULT 0,
+                estado TEXT NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo','error','desconectado')),
+                error TEXT NOT NULL DEFAULT '',
+                creado_por TEXT NOT NULL DEFAULT '',
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (tipo, ext_id)
+            )""",
+            "ALTER TABLE crm_mensajes ADD COLUMN IF NOT EXISTS canal_id INTEGER REFERENCES crm_canales(id) ON DELETE SET NULL",
+            "CREATE INDEX IF NOT EXISTS ix_crm_msg_canal ON crm_mensajes (lead_id, canal, direccion, creado_en DESC)",
+            """CREATE TABLE IF NOT EXISTS crm_oauth_sesiones (
+                id TEXT PRIMARY KEY,
+                usuario TEXT NOT NULL,
+                tipo TEXT NOT NULL DEFAULT 'meta',
+                waba_id TEXT NOT NULL DEFAULT '',
+                token TEXT NOT NULL,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
+            # ---------- CRM: formularios web configurables ----------
+            """CREATE TABLE IF NOT EXISTS crm_formularios (
+                id SERIAL PRIMARY KEY,
+                slug TEXT UNIQUE NOT NULL,
+                nombre TEXT NOT NULL,
+                titulo TEXT NOT NULL DEFAULT '',
+                descripcion TEXT NOT NULL DEFAULT '',
+                boton TEXT NOT NULL DEFAULT 'Enviar',
+                exito_titulo TEXT NOT NULL DEFAULT 'Gracias, te contactaremos pronto',
+                exito_mensaje TEXT NOT NULL DEFAULT 'Recibimos tus datos. Un ejecutivo de ventas se comunicará contigo.',
+                origen TEXT NOT NULL DEFAULT 'web',
+                ejecutivo_id INTEGER REFERENCES ejecutivos(id) ON DELETE SET NULL,
+                activo INTEGER NOT NULL DEFAULT 1,
+                campos JSONB NOT NULL DEFAULT '[]'::jsonb,
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+                actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
+            """INSERT INTO crm_formularios (slug, nombre, titulo, descripcion, origen, campos)
+               SELECT 'contacto', 'Formulario de contacto', 'Cuéntanos qué necesitas',
+                      'Déjanos tus datos y un ejecutivo de ventas te contactará.', 'web',
+                      '[{"id":"nombre","tipo":"texto","etiqueta":"Nombre completo","requerido":true,"destino":"nombre"},{"id":"telefono","tipo":"telefono","etiqueta":"Teléfono / WhatsApp","requerido":false,"destino":"telefono"},{"id":"correo","tipo":"correo","etiqueta":"Correo","requerido":false,"destino":"correo"},{"id":"empresa","tipo":"texto","etiqueta":"Empresa (opcional)","requerido":false,"destino":"empresa"},{"id":"interes","tipo":"texto","etiqueta":"Qué te interesa","requerido":false,"destino":"interes"},{"id":"mensaje","tipo":"area","etiqueta":"Mensaje (opcional)","requerido":false,"destino":"nota"}]'::jsonb
+                WHERE NOT EXISTS (SELECT 1 FROM crm_formularios)""",
             # Un aviso de lead de anuncio se procesa una sola vez, aunque Meta lo reintente
             """CREATE TABLE IF NOT EXISTS crm_leadgen_vistos (
                 leadgen_id TEXT PRIMARY KEY,

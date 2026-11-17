@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from core import canales as cn
 from core.crm import avisar_lead, captar_lead
 from core.db import abrir_db
 from core.secretos import leer
@@ -51,16 +52,25 @@ def traducir_error(codigo: int, mensaje: str = "") -> str:
 
 # ---------------- Configuración (cifrada, se edita en el panel) ----------------
 def cfg() -> dict[str, str]:
-    return {
-        "phone_id": leer("wa_phone_id"), "waba_id": leer("wa_waba_id"), "token": leer("wa_token"),
-        "app_secret": leer("wa_app_secret"), "verify_token": leer("wa_verify_token"),
-        "version": leer("wa_version") or VERSION_BASE,
-    }
+    base = {"app_secret": leer("wa_app_secret"), "verify_token": leer("wa_verify_token"), "version": leer("wa_version") or VERSION_BASE}
+    cid = cn.actual()
+    if cid is None:  # sin canal elegido: las credenciales de Conexiones (como siempre)
+        return {**base, "phone_id": leer("wa_phone_id"), "waba_id": leer("wa_waba_id"), "token": leer("wa_token")}
+    con = abrir_db()
+    try:
+        c = cn.obtener(con, cid)
+    finally:
+        con.close()
+    if not c or c["tipo"] != "whatsapp" or c["estado"] == "desconectado":
+        raise ErrorWa("Ese número de WhatsApp ya no está conectado.")
+    return {**base, "phone_id": c["ext_id"], "waba_id": c["waba_id"], "token": cn.token_de(c)}
 
 
 def configurado() -> bool:
     c = cfg()
-    return bool(c["phone_id"] and c["token"] and c["app_secret"])
+    if not c["app_secret"]:
+        return False
+    return bool(c["phone_id"] and c["token"]) or (cn.actual() is None and cn.hay_activos("whatsapp"))
 
 
 def _obligatoria() -> dict[str, str]:
@@ -91,6 +101,8 @@ def _graph(metodo: str, ruta: str, cuerpo: dict | None = None, consulta: dict | 
         except Exception:
             err = {}
         logger.warning("Meta rechazó %s %s: %s", metodo, ruta, {k: err.get(k) for k in ("code", "error_subcode", "message")})
+        if int(err.get("code", 0) or 0) == 190:
+            cn.marcar(cn.actual(), "error", "El token venció o no es válido. Vuelve a conectar este número.")
         raise ErrorWa(traducir_error(err.get("code", 0), err.get("message", "")))
     except Exception as e:
         logger.error("No se pudo contactar a Meta: %s", e)
@@ -132,13 +144,14 @@ def enviar_plantilla(para: str, nombre: str, idioma: str, variables: list[str]) 
     return r["messages"][0]["id"]
 
 
-_cache_pl: dict = {"t": 0.0, "v": []}
+_cache_pl: dict = {}
 
 
 def plantillas() -> list[dict]:
     """Plantillas aprobadas que se pueden enviar desde el CRM (texto con variables en el cuerpo)."""
-    if time.time() - _cache_pl["t"] < 60 and _cache_pl["v"]:
-        return _cache_pl["v"]
+    ent = _cache_pl.get(cn.actual() or 0)
+    if ent and time.time() - ent[0] < 60:
+        return ent[1]
     c = _obligatoria()
     if not c["waba_id"]:
         raise ErrorWa("Falta el ID de la cuenta de WhatsApp Business (WABA) para listar las plantillas.")
@@ -157,7 +170,7 @@ def plantillas() -> list[dict]:
         n = len(set(re.findall(r"\{\{(\d+)\}\}", cuerpo)))
         salida.append({"nombre": t["name"], "idioma": t["language"], "categoria": t.get("category", ""), "cuerpo": cuerpo, "variables": n})
     salida.sort(key=lambda x: x["nombre"])
-    _cache_pl.update({"t": time.time(), "v": salida})
+    _cache_pl[cn.actual() or 0] = (time.time(), salida)
     return salida
 
 
@@ -218,7 +231,7 @@ def _contenido(m: dict) -> tuple[str, str, str | None, str | None, str | None] |
     return "otro", f"[Mensaje de tipo «{t}» que aún no se puede mostrar]", None, None, None
 
 
-def _recibir(con, m: dict, nombres: dict[str, str]) -> int | None:
+def _recibir(con, m: dict, nombres: dict[str, str], canal_id: int | None = None) -> int | None:
     wa_id = m.get("id")
     de = normalizar_telefono(m.get("from", ""))
     cont = _contenido(m)
@@ -238,9 +251,9 @@ def _recibir(con, m: dict, nombres: dict[str, str]) -> int | None:
         lid, _ = captar_lead(con, nombre=nombre, telefono=de, origen="whatsapp", interes=(texto or "")[:80])
     # Si Meta reintenta el aviso, el índice único lo detecta y no se cuenta dos veces
     nuevo = con.execute(
-        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, media_id, media_mime, media_nombre, estado, creado_en) "
-        "VALUES (?, 'in', ?, ?, ?, ?, ?, ?, 'recibido', ?) ON CONFLICT DO NOTHING RETURNING id",
-        (lid, wa_id, tipo, texto, media_id, mime, archivo, ts)).fetchone()
+        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, media_id, media_mime, media_nombre, estado, creado_en, canal_id) "
+        "VALUES (?, 'in', ?, ?, ?, ?, ?, ?, 'recibido', ?, ?) ON CONFLICT DO NOTHING RETURNING id",
+        (lid, wa_id, tipo, texto, media_id, mime, archivo, ts, canal_id)).fetchone()
     if not nuevo:
         return None
     con.execute(
@@ -272,20 +285,21 @@ def procesar(payload: dict) -> dict:
     cuenta = {"mensajes": 0, "estados": 0}
     if payload.get("object") != "whatsapp_business_account":
         return cuenta
-    mi_numero = leer("wa_phone_id")
-    if not mi_numero:
-        return cuenta
+
     avisar: set[int] = set()
     con = abrir_db()
     try:
         for entrada in payload.get("entry", []):
             for cambio in entrada.get("changes", []):
                 v = cambio.get("value") or {}
-                if cambio.get("field") != "messages" or (v.get("metadata") or {}).get("phone_number_id") != mi_numero:
+                if cambio.get("field") != "messages":
                     continue
+                canal = cn.buscar(con, "whatsapp", str((v.get("metadata") or {}).get("phone_number_id") or ""))
+                if not canal:
+                    continue  # aviso de un número que no está conectado en este CRM
                 nombres = {x.get("wa_id", ""): (x.get("profile") or {}).get("name", "") for x in v.get("contacts", [])}
                 for m in v.get("messages", []):
-                    lid = _recibir(con, m, nombres)
+                    lid = _recibir(con, m, nombres, canal["id"])
                     if lid:
                         avisar.add(lid); cuenta["mensajes"] += 1
                 for s in v.get("statuses", []):

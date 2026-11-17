@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from core import canales as cn
 from core import meta_social as ms
 from core import whatsapp as wa
 from core.crm import avisar_lead
@@ -121,10 +122,10 @@ class PlantillaIn(BaseModel):
     variables: list[str] = Field(default_factory=list, max_length=20)
 
 
-def _guardar_salida(con, lid: int, wamid: str, tipo: str, texto: str, usuario: str) -> None:
+def _guardar_salida(con, lid: int, wamid: str, tipo: str, texto: str, usuario: str, canal_id: int | None = None) -> None:
     con.execute(
-        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, estado, enviado_por) VALUES (?, 'out', ?, ?, ?, 'enviado', ?)",
-        (lid, wamid, tipo, texto, usuario))
+        "INSERT INTO crm_mensajes (lead_id, direccion, wa_id, tipo, texto, estado, enviado_por, canal_id) VALUES (?, 'out', ?, ?, ?, 'enviado', ?, ?)",
+        (lid, wamid, tipo, texto, usuario, canal_id))
     con.execute(
         "UPDATE crm_leads SET wa_no_leidos=0, ultimo_contacto_en=now(), actualizado_en=now() WHERE id=?", (lid,))
 
@@ -175,10 +176,12 @@ def enviar(lid: int, d: TextoIn, ctx: dict = Depends(contexto)):
             if not wa.dentro_de_ventana(l["wa_ultimo_entrante"]):
                 raise HTTPException(409, "Pasaron más de 24 horas desde el último mensaje del cliente. Envía una plantilla aprobada.")
             try:
-                wamid = wa.enviar_texto(l["telefono"], d.texto.strip())
+                canal_id = cn.para_responder(con, lid, "whatsapp")  # el número por el que el cliente escribió
+                with cn.usando(canal_id):
+                    wamid = wa.enviar_texto(l["telefono"], d.texto.strip())
             except wa.ErrorWa as e:
                 raise HTTPException(400, str(e))
-            _guardar_salida(con, lid, wamid, "text", d.texto.strip(), ctx["u"]["usuario"])
+            _guardar_salida(con, lid, wamid, "text", d.texto.strip(), ctx["u"]["usuario"], canal_id)
         else:
             try:
                 ms.enviar_a_lead(con, lid, d.canal, d.texto.strip(), ctx["u"]["usuario"])
@@ -198,17 +201,19 @@ def enviar_plantilla(lid: int, d: PlantillaIn, ctx: dict = Depends(contexto)):
         l = _lead(con, lid, ctx)
         if not l["telefono"]:
             raise HTTPException(400, "Este lead no tiene teléfono")
+        canal_id = cn.para_responder(con, lid, "whatsapp")  # el mismo número por el que ya hablaban (o el principal)
         try:
-            pl = next((p for p in wa.plantillas() if p["nombre"] == d.nombre and p["idioma"] == d.idioma), None)
-            if not pl:
-                raise HTTPException(400, "Esa plantilla no está aprobada o no se puede enviar desde aquí")
-            if len(d.variables) != pl["variables"] or any(not v.strip() for v in d.variables):
-                raise HTTPException(400, f"Esta plantilla necesita {pl['variables']} variable(s), todas con texto")
-            wamid = wa.enviar_plantilla(l["telefono"], d.nombre, d.idioma, d.variables)
+            with cn.usando(canal_id):
+                pl = next((p for p in wa.plantillas() if p["nombre"] == d.nombre and p["idioma"] == d.idioma), None)
+                if not pl:
+                    raise HTTPException(400, "Esa plantilla no está aprobada o no se puede enviar desde aquí")
+                if len(d.variables) != pl["variables"] or any(not v.strip() for v in d.variables):
+                    raise HTTPException(400, f"Esta plantilla necesita {pl['variables']} variable(s), todas con texto")
+                wamid = wa.enviar_plantilla(l["telefono"], d.nombre, d.idioma, d.variables)
         except wa.ErrorWa as e:
             raise HTTPException(400, str(e))
         texto = re.sub(r"\{\{(\d+)\}\}", lambda m: d.variables[int(m.group(1)) - 1] if int(m.group(1)) <= len(d.variables) else "", pl["cuerpo"])
-        _guardar_salida(con, lid, wamid, "template", f"[Plantilla {d.nombre}] {texto}", ctx["u"]["usuario"])
+        _guardar_salida(con, lid, wamid, "template", f"[Plantilla {d.nombre}] {texto}", ctx["u"]["usuario"], canal_id)
     finally:
         con.close()
     avisar_lead(lid)
@@ -229,19 +234,29 @@ def marcar_leido(lid: int, ctx: dict = Depends(contexto)):
 
 
 @router.get("/whatsapp/plantillas")
-def listar_plantillas(ctx: dict = Depends(contexto)):
+def listar_plantillas(lead_id: int | None = None, ctx: dict = Depends(contexto)):
+    con = abrir_db()
     try:
-        return wa.plantillas()
+        if lead_id is not None:
+            _lead(con, lead_id, ctx)
+            cid = cn.para_responder(con, lead_id, "whatsapp")
+        else:
+            cid = cn.predeterminado(con, "whatsapp")
+    finally:
+        con.close()
+    try:
+        with cn.usando(cid):
+            return wa.plantillas()
     except wa.ErrorWa as e:
         raise HTTPException(400, str(e))
-
+    
 
 @router.get("/mensajes/{mid}/media")
 def media(mid: int, ctx: dict = Depends(contexto)):
     con = abrir_db()
     try:
         m = con.execute(
-            "SELECT lead_id, media_id, media_mime, media_nombre, tipo, canal FROM crm_mensajes WHERE id=? AND media_id IS NOT NULL", (mid,)).fetchone()
+            "SELECT lead_id, media_id, media_mime, media_nombre, tipo, canal, canal_id FROM crm_mensajes WHERE id=? AND media_id IS NOT NULL", (mid,)).fetchone()
         if not m:
             raise HTTPException(404, "Archivo no encontrado")
         _lead(con, m["lead_id"], ctx)  # el asesor solo ve archivos de sus propios leads
@@ -251,7 +266,8 @@ def media(mid: int, ctx: dict = Depends(contexto)):
         if m["canal"] in ("facebook", "instagram"):
             contenido, mime = ms.descargar_url(m["media_id"])  # en estos canales media_id guarda la URL temporal del archivo
         else:
-            contenido, mime = wa.descargar_media(m["media_id"])
+            with cn.usando(m["canal_id"]):
+                contenido, mime = wa.descargar_media(m["media_id"])
     except wa.ErrorWa as e:
         raise HTTPException(400, str(e))
     mime = (m["media_mime"] or mime).split(";")[0].strip().lower()

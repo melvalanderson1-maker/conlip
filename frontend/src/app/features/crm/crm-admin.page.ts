@@ -2,14 +2,15 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { Router } from '@angular/router';
 import { ESTILOS_ADMIN } from '../../shared/estilos-admin';
 import { CrmEjecutivosComponent } from './crm-ejecutivos.component';
+import { CrmFormulariosComponent } from './crm-formularios.component';
 import { CrmPanelComponent } from './crm-panel.component';
 import { CrmFlagService } from './crm.service';
 
-type Pestana = 'tablero' | 'equipo';
+type Pestana = 'tablero' | 'equipo' | 'formularios';
 
 @Component({
   selector: 'app-crm-admin',
-  imports: [CrmPanelComponent, CrmEjecutivosComponent],
+  imports: [CrmPanelComponent, CrmEjecutivosComponent, CrmFormulariosComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="wrap">
@@ -24,6 +25,7 @@ type Pestana = 'tablero' | 'equipo';
       <div class="tabs">
         <button type="button" [class.on]="pestana() === 'tablero'" (click)="pestana.set('tablero')">Tablero</button>
         <button type="button" [class.on]="pestana() === 'equipo'" (click)="pestana.set('equipo')">Equipo de ventas</button>
+        <button type="button" [class.on]="pestana() === 'formularios'" (click)="pestana.set('formularios')">Formularios</button>
       </div>
 
       @if (pestana() === 'tablero') {
@@ -37,7 +39,7 @@ type Pestana = 'tablero' | 'equipo';
           </section>
         }
       } @else {
-        <app-crm-ejecutivos />
+        @if (pestana() === 'equipo') { <app-crm-ejecutivos /> } @else { <app-crm-formularios /> }
       }
     </div>
   `,

@@ -249,7 +249,7 @@ export class CrmConversacionComponent implements OnInit {
   // ---------------- Plantillas (solo WhatsApp) ----------------
   abrirPlantillas(): void {
     this.sel.set(null); this.vars.set([]); this.errorModal.set(''); this.modal.set(true);
-    this.api.plantillas().subscribe({
+    this.api.plantillas(this.leadId()).subscribe({
       next: (p) => this.plantillas.set(p),
       error: (e: HttpErrorResponse) => { this.plantillas.set([]); this.errorModal.set(this.msg(e)); },
     });

@@ -17,6 +17,18 @@ export interface Conversacion {
   canales: CanalInfo[]; mensajes: Mensaje[];
 }
 export interface Plantilla { nombre: string; idioma: string; categoria: string; cuerpo: string; variables: number; }
+export interface CanalCrm {
+  id: number; tipo: Canal; nombre: string; ext_id: string; waba_id: string; page_id: string; detalle: string;
+  estado: 'activo' | 'error' | 'desconectado'; error: string; legado: boolean; creado_en: string;
+}
+export interface EstadoCanales {
+  app_id: string; config_id: string; app_secret_guardado: boolean; clave_ok: boolean; redirect_uri: string; canales: CanalCrm[];
+}
+export interface ActivosMeta {
+  paginas: { id: string; nombre: string; ig: { id: string; usuario: string } | null; conectada: boolean; ig_conectada: boolean }[];
+  numeros: { id: string; waba_id: string; waba: string; numero: string; nombre: string; calidad: string; conectada: boolean }[];
+  avisos: string[];
+}
 export interface EstadoWa {
   clave_ok: boolean; configurado: boolean; phone_id: string; waba_id: string; token_guardado: boolean; secreto_guardado: boolean;
   version: string; verify_token: string; webhook_url: string; ultimo_evento: string | null;
@@ -32,6 +44,7 @@ export class WhatsappService {
   private readonly crm = `${API}/crm`;
   private readonly adm = `${API}/integraciones/whatsapp`;
   private readonly meta = `${API}/integraciones/meta`;
+  private readonly cnl = `${API}/integraciones/canales`;
 
   mensajes(id: number): Observable<Conversacion> { return this.http.get<Conversacion>(`${this.crm}/leads/${id}/mensajes`); }
   enviar(id: number, texto: string, canal: Canal = 'whatsapp'): Observable<unknown> {
@@ -41,7 +54,9 @@ export class WhatsappService {
     return this.http.post(`${this.crm}/leads/${id}/plantilla`, d);
   }
   leido(id: number): Observable<unknown> { return this.http.post(`${this.crm}/leads/${id}/leido`, {}); }
-  plantillas(): Observable<Plantilla[]> { return this.http.get<Plantilla[]>(`${this.crm}/whatsapp/plantillas`); }
+  plantillas(leadId?: number): Observable<Plantilla[]> {
+    return this.http.get<Plantilla[]>(`${this.crm}/whatsapp/plantillas`, { params: leadId ? { lead_id: leadId } : {} });
+  }
   media(id: number): Observable<Blob> { return this.http.get(`${this.crm}/mensajes/${id}/media`, { responseType: 'blob' }); }
 
   estado(): Observable<EstadoWa> { return this.http.get<EstadoWa>(this.adm); }
@@ -55,4 +70,22 @@ export class WhatsappService {
   probarMeta(): Observable<{ ok: boolean; detalle: string }> { return this.http.post<{ ok: boolean; detalle: string }>(`${this.meta}/probar`, {}); }
   suscribirMeta(): Observable<{ ok: boolean; detalle: string }> { return this.http.post<{ ok: boolean; detalle: string }>(`${this.meta}/suscribir`, {}); }
   nuevaClaveEntrada(): Observable<{ clave: string }> { return this.http.post<{ clave: string }>(`${this.meta}/clave-entrada`, {}); }
+
+  // ---- Canales: varios números, páginas y cuentas (solo superadmin) ----
+  canales(): Observable<EstadoCanales> { return this.http.get<EstadoCanales>(this.cnl); }
+  guardarApp(d: { app_id: string; config_id: string }): Observable<unknown> { return this.http.put(`${this.cnl}/app`, d); }
+  iniciarOauth(): Observable<{ url: string }> { return this.http.post<{ url: string }>(`${this.cnl}/oauth/iniciar`, {}); }
+  tokenWhatsapp(d: { waba_id: string; token: string }): Observable<{ sid: string }> {
+    return this.http.post<{ sid: string }>(`${this.cnl}/token-whatsapp`, d);
+  }
+  activos(sid: string): Observable<ActivosMeta> { return this.http.get<ActivosMeta>(`${this.cnl}/sesiones/${sid}`); }
+  conectarSesion(sid: string, d: { paginas: string[]; instagram: string[]; numeros: { id: string; waba_id: string }[] }):
+    Observable<{ conectados: string[]; avisos: string[] }> {
+    return this.http.post<{ conectados: string[]; avisos: string[] }>(`${this.cnl}/sesiones/${sid}/conectar`, d);
+  }
+  probarCanal(id: number): Observable<{ ok: boolean; detalle: string }> {
+    return this.http.post<{ ok: boolean; detalle: string }>(`${this.cnl}/${id}/probar`, {});
+  }
+  renombrarCanal(id: number, nombre: string): Observable<unknown> { return this.http.patch(`${this.cnl}/${id}`, { nombre }); }
+  desconectarCanal(id: number): Observable<unknown> { return this.http.delete(`${this.cnl}/${id}`); }
 }

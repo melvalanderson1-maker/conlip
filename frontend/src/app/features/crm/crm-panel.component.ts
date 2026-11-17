@@ -6,9 +6,10 @@ import { ESTILOS_ADMIN } from '../../shared/estilos-admin';
 import { IconComponent } from '../../shared/icon.component';
 import { CrmLeadComponent } from './crm-lead.component';
 import { CrmConexionesComponent } from './crm-conexiones.component';
+import { CrmCanalesComponent } from './crm-canales.component';
 import { AsesorCrm, CrmService, Etapa, Lead, ResultadoImport, Resumen } from './crm.service';
 
-type Vista = 'tablero' | 'lista' | 'config' | 'conexiones';
+type Vista = 'tablero' | 'lista' | 'config' | 'conexiones' | 'canales';
 
 interface NuevoLeadForm {
   nombre: string;
@@ -60,7 +61,7 @@ function leerCsv(texto: string): Record<string, string>[] {
 
 @Component({
   selector: 'app-crm-panel',
-  imports: [IconComponent, CrmLeadComponent, CrmConexionesComponent],
+  imports: [IconComponent, CrmLeadComponent, CrmConexionesComponent, CrmCanalesComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (mensaje()) { <p class="ok"><app-icon name="circle-check" [size]="18" /> {{ mensaje() }}</p> }
@@ -71,6 +72,7 @@ function leerCsv(texto: string): Record<string, string>[] {
         <button type="button" [class.on]="vista() === 'tablero'" (click)="vista.set('tablero')">Tablero</button>
         <button type="button" [class.on]="vista() === 'lista'" (click)="vista.set('lista')">Lista</button>
         @if (esAdmin()) {
+          <button type="button" [class.on]="vista() === 'canales'" (click)="vista.set('canales')">Canales</button>
           <button type="button" [class.on]="vista() === 'conexiones'" (click)="vista.set('conexiones')">Conexiones</button>
           <button type="button" [class.on]="vista() === 'config'" (click)="irConfig()">Configuración</button>
         }
@@ -157,6 +159,7 @@ function leerCsv(texto: string): Record<string, string>[] {
       }
 
       @case ('conexiones') { <app-crm-conexiones /> }
+      @case ('canales') { <app-crm-canales /> }
 
       @case ('config') {
         @if (cfg(); as c) {
@@ -332,6 +335,7 @@ readonly importar = signal<boolean>(false);
   readonly etapasCfg = signal<Etapa[]>([]);
 
   ngOnInit(): void {
+    if (this.esAdmin() && new URLSearchParams(location.search).has('canales')) this.vista.set('canales');  // al volver de Meta
     this.api.etapas().subscribe({ next: (e) => { this.etapas.set(e); this.recargar(); }, error: (er: HttpErrorResponse) => this.fallo(er) });
     if (this.esAdmin()) this.api.asesores().subscribe({ next: (a) => this.asesores.set(a), error: () => undefined });
     // Tiempo real: cualquier cambio de leads (míos o de otros) se refleja sin recargar
