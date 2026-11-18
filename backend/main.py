@@ -48,6 +48,8 @@ from modules.crm.formularios import router_publico as formularios_publico_router
 from modules.crm.canales import router as canales_router
 from modules.crm.canales import router_callback as canales_callback_router
 from modules.crm.automatizaciones import router as automatizaciones_router
+from modules.crm.archivos import router as archivos_router
+from modules.crm.archivos import router_publico as archivos_publico_router
 from modules.agenda.cliente import router as agenda_cliente_router
 from modules.agenda.integraciones import router as integraciones_router
 from modules.agenda.integraciones import router_callback as integraciones_callback_router
@@ -205,6 +207,8 @@ app.include_router(formularios_publico_router)
 app.include_router(canales_router)
 app.include_router(canales_callback_router)
 app.include_router(automatizaciones_router)
+app.include_router(archivos_router)
+app.include_router(archivos_publico_router)
 app.include_router(agenda_cliente_router)
 app.include_router(integraciones_router)
 app.include_router(integraciones_callback_router)

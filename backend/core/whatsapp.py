@@ -130,6 +130,63 @@ def enviar_texto(para: str, texto: str) -> str:
     return r["messages"][0]["id"]
 
 
+def subir_media(contenido: bytes, mime: str, nombre: str) -> str:
+    """Sube un archivo a Meta y devuelve su id (sirve para enviarlo)."""
+    c = _obligatoria()
+    limite = f"----crm{time.time_ns()}"
+    seguro = re.sub(r'[^\w.\- ]', "_", nombre)[:80] or "archivo"
+    cuerpo = b"".join([
+        f'--{limite}\r\nContent-Disposition: form-data; name="messaging_product"\r\n\r\nwhatsapp\r\n'.encode(),
+        f'--{limite}\r\nContent-Disposition: form-data; name="type"\r\n\r\n{mime}\r\n'.encode(),
+        f'--{limite}\r\nContent-Disposition: form-data; name="file"; filename="{seguro}"\r\nContent-Type: {mime}\r\n\r\n'.encode(),
+        contenido, f"\r\n--{limite}--\r\n".encode()])
+    req = urllib.request.Request(
+        f"{GRAPH}/{c['version']}/{c['phone_id']}/media", data=cuerpo, method="POST",
+        headers={"Authorization": f"Bearer {c['token']}", "Content-Type": f"multipart/form-data; boundary={limite}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())["id"]
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.loads(e.read()).get("error", {})
+        except Exception:
+            err = {}
+        logger.warning("Meta rechazó la subida del archivo: %s", {k: err.get(k) for k in ("code", "error_subcode", "message")})
+        if int(err.get("code", 0) or 0) == 190:
+            cn.marcar(cn.actual(), "error", "El token venció o no es válido. Vuelve a conectar este número.")
+        raise ErrorWa(traducir_error(err.get("code", 0), err.get("message", "")))
+    except Exception as e:
+        logger.error("No se pudo subir el archivo a Meta: %s", e)
+        raise ErrorWa("No se pudo subir el archivo a Meta. Inténtalo de nuevo.")
+
+
+def enviar_media(para: str, categoria: str, media_id: str, caption: str = "", nombre: str = "") -> str:
+    c = _obligatoria()
+    tipo = {"imagen": "image", "audio": "audio", "video": "video", "documento": "document"}[categoria]
+    cuerpo: dict = {"id": media_id}
+    if caption.strip() and tipo != "audio":  # los audios no admiten texto
+        cuerpo["caption"] = caption.strip()[:1000]
+    if tipo == "document":
+        cuerpo["filename"] = nombre[:100]
+    r = _graph("POST", f"/{c['phone_id']}/messages", {
+        "messaging_product": "whatsapp", "recipient_type": "individual", "to": para, "type": tipo, tipo: cuerpo})
+    return r["messages"][0]["id"]
+
+
+def enviar_botones(para: str, cuerpo: str, botones: list[str], cabecera: tuple[str, str] | None = None) -> str:
+    """Mensaje interactivo con hasta 3 botones. cabecera = (categoría, media_id) de una imagen o video."""
+    c = _obligatoria()
+    interactivo: dict = {
+        "type": "button", "body": {"text": cuerpo[:1024]},
+        "action": {"buttons": [{"type": "reply", "reply": {"id": f"b{i + 1}", "title": t.strip()[:20]}} for i, t in enumerate(botones[:3])]}}
+    if cabecera:
+        tipo = "image" if cabecera[0] == "imagen" else "video"
+        interactivo["header"] = {"type": tipo, tipo: {"id": cabecera[1]}}
+    r = _graph("POST", f"/{c['phone_id']}/messages", {
+        "messaging_product": "whatsapp", "recipient_type": "individual", "to": para, "type": "interactive", "interactive": interactivo})
+    return r["messages"][0]["id"]
+
+
 def _limpiar_variable(v: str) -> str:
     # Meta no acepta saltos de línea, tabulaciones ni más de 4 espacios seguidos dentro de una variable
     return re.sub(r"\s{2,}", " ", re.sub(r"[\r\n\t]+", " ", v)).strip()[:500]

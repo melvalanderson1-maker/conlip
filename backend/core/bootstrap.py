@@ -634,7 +634,20 @@ PASOS = [
                 token TEXT NOT NULL,
                 creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
             )""",
-# ---------- CRM: automatizaciones (flujos de nodos) ----------
+            # ---------- CRM: archivos (biblioteca y adjuntos de conversaciones) ----------
+            """CREATE TABLE IF NOT EXISTS crm_archivos (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                mime TEXT NOT NULL,
+                categoria TEXT NOT NULL CHECK (categoria IN ('imagen','audio','video','documento')),
+                tamano BIGINT NOT NULL,
+                ruta TEXT NOT NULL UNIQUE,
+                origen TEXT NOT NULL DEFAULT 'conversacion' CHECK (origen IN ('biblioteca','conversacion')),
+                subido_por TEXT NOT NULL DEFAULT '',
+                creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+            )""",
+            "ALTER TABLE crm_mensajes ADD COLUMN IF NOT EXISTS archivo_id INTEGER REFERENCES crm_archivos(id) ON DELETE SET NULL",
+            # ---------- CRM: automatizaciones (flujos de nodos) ----------
             "ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS bot_pausado_hasta TIMESTAMPTZ",
             """CREATE TABLE IF NOT EXISTS crm_flujos (
                 id SERIAL PRIMARY KEY,

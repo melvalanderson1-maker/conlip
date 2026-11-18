@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from core import archivos as ar
 from core import automatizaciones as au
 from core import canales as cn
 from core import meta_social as ms
@@ -153,7 +154,7 @@ def mensajes(lid: int, ctx: dict = Depends(contexto)):
     try:
         l = _lead(con, lid, ctx)
         filas = con.execute(
-            "SELECT id, direccion, tipo, texto, (media_id IS NOT NULL) AS tiene_media, media_mime, media_nombre, estado, error, "
+            "SELECT id, direccion, tipo, texto, (media_id IS NOT NULL OR archivo_id IS NOT NULL) AS tiene_media, media_mime, media_nombre, estado, error, "
             "enviado_por, creado_en, canal FROM crm_mensajes WHERE lead_id=? ORDER BY creado_en DESC LIMIT 300", (lid,)).fetchall()
     finally:
         con.close()
@@ -259,14 +260,17 @@ def media(mid: int, ctx: dict = Depends(contexto)):
     con = abrir_db()
     try:
         m = con.execute(
-            "SELECT lead_id, media_id, media_mime, media_nombre, tipo, canal, canal_id FROM crm_mensajes WHERE id=? AND media_id IS NOT NULL", (mid,)).fetchone()
+            "SELECT lead_id, media_id, media_mime, media_nombre, tipo, canal, canal_id, archivo_id FROM crm_mensajes "
+            "WHERE id=? AND (media_id IS NOT NULL OR archivo_id IS NOT NULL)", (mid,)).fetchone()
         if not m:
             raise HTTPException(404, "Archivo no encontrado")
         _lead(con, m["lead_id"], ctx)  # el asesor solo ve archivos de sus propios leads
     finally:
         con.close()
     try:
-        if m["canal"] in ("facebook", "instagram"):
+        if m["archivo_id"]:  # archivo que enviamos nosotros: está en nuestro volumen
+            contenido, mime = ar.leer_por_id(m["archivo_id"])
+        elif m["canal"] in ("facebook", "instagram"):
             contenido, mime = ms.descargar_url(m["media_id"])  # en estos canales media_id guarda la URL temporal del archivo
         else:
             with cn.usando(m["canal_id"]):

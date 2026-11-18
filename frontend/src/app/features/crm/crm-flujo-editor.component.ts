@@ -4,6 +4,7 @@ import { Observable, of, switchMap, tap } from 'rxjs';
 import { CrmService, Ejecutivo, Etapa } from './crm.service';
 import { Canal, CanalCrm, Plantilla, WhatsappService } from './crm-whatsapp.service';
 import { AutomatizacionesService, Conexion, Nodo, PasoPrueba, TipoNodo } from './crm-automatizaciones.service';
+import { ArchivoCrm, ArchivosService } from './crm-archivos.service';
 
 interface Instantanea { nodos: Nodo[]; conexiones: Conexion[]; }
 interface Meta { nombre: string; icono: string; color: string; descripcion: string; }
@@ -14,6 +15,8 @@ const META: Record<TipoNodo, Meta> = {
   mensaje: { nombre: 'Enviar mensaje', icono: '💬', color: '#2563eb', descripcion: 'Envía un texto al cliente' },
   plantilla: { nombre: 'Plantilla de WhatsApp', icono: '📋', color: '#0ea5e9', descripcion: 'Mensaje aprobado por Meta' },
   ia: { nombre: 'Responder con IA', icono: '🤖', color: '#7c3aed', descripcion: 'La IA contesta por ti' },
+  archivo: { nombre: 'Enviar archivo', icono: '📎', color: '#0d9488', descripcion: 'Imagen, audio, video o documento' },
+  botones: { nombre: 'Botones de WhatsApp', icono: '🔘', color: '#ea580c', descripcion: 'El cliente elige un botón' },
   esperar: { nombre: 'Esperar', icono: '⏱️', color: '#64748b', descripcion: 'Pausa durante un tiempo' },
   esperar_respuesta: { nombre: 'Esperar respuesta', icono: '↩️', color: '#0891b2', descripcion: 'Espera a que el cliente conteste' },
   condicion: { nombre: 'Condición', icono: '🔀', color: '#d97706', descripcion: 'Divide el camino según un dato' },
@@ -23,12 +26,14 @@ const META: Record<TipoNodo, Meta> = {
   tarea: { nombre: 'Crear tarea', icono: '✅', color: '#16a34a', descripcion: 'Programa una tarea para el equipo' },
   fin: { nombre: 'Fin', icono: '⏹️', color: '#475569', descripcion: 'Termina el flujo' },
 };
-const PALETA: TipoNodo[] = ['mensaje', 'plantilla', 'ia', 'esperar', 'esperar_respuesta', 'condicion', 'asignar', 'etapa', 'nota', 'tarea', 'fin'];
+const PALETA: TipoNodo[] = ['mensaje', 'botones', 'archivo', 'plantilla', 'ia', 'esperar', 'esperar_respuesta', 'condicion', 'asignar', 'etapa', 'nota', 'tarea', 'fin'];
 const SALIDAS: Record<TipoNodo, { id: string; label: string }[]> = {
   disparador: [{ id: 'siguiente', label: '' }],
   mensaje: [{ id: 'siguiente', label: 'Enviado' }, { id: 'error', label: 'Error' }],
   plantilla: [{ id: 'siguiente', label: 'Enviada' }, { id: 'error', label: 'Error' }],
   ia: [{ id: 'siguiente', label: 'Respondió' }, { id: 'humano', label: 'A una persona' }, { id: 'error', label: 'Error' }],
+  archivo: [{ id: 'siguiente', label: 'Enviado' }, { id: 'error', label: 'Error' }],
+  botones: [{ id: 'b1', label: 'Botón 1' }, { id: 'b2', label: 'Botón 2' }, { id: 'b3', label: 'Botón 3' }, { id: 'otro', label: 'Otra respuesta' }, { id: 'tiempo', label: 'Sin respuesta' }, { id: 'error', label: 'Error' }],
   esperar: [{ id: 'siguiente', label: '' }],
   esperar_respuesta: [{ id: 'respondio', label: 'Respondió' }, { id: 'tiempo', label: 'Sin respuesta' }],
   condicion: [{ id: 'si', label: 'Sí' }, { id: 'no', label: 'No' }],
@@ -64,8 +69,16 @@ const VARIABLES = [
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ORIGENES_DEFECTO = ['whatsapp', 'facebook', 'instagram'];
 
-function alto(n: Nodo): number { return Math.max(80, 30 + SALIDAS[n.tipo].length * 34); }
-function puertoY(n: Nodo, i: number): number { return (alto(n) / (SALIDAS[n.tipo].length + 1)) * (i + 1); }
+function salidasDe(n: Nodo): { id: string; label: string }[] {
+  if (n.tipo !== 'botones') return SALIDAS[n.tipo];
+  const bs = Array.isArray(n.config['botones']) ? (n.config['botones'] as unknown[]).slice(0, 3) : [];
+  return [
+    ...bs.map((b, i) => ({ id: `b${i + 1}`, label: String(b).trim() || `Botón ${i + 1}` })),
+    { id: 'otro', label: 'Otra respuesta' }, { id: 'tiempo', label: 'Sin respuesta' }, { id: 'error', label: 'Error' },
+  ];
+}
+function alto(n: Nodo): number { return Math.max(80, 30 + salidasDe(n).length * 34); }
+function puertoY(n: Nodo, i: number): number { return (alto(n) / (salidasDe(n).length + 1)) * (i + 1); }
 function curva(x1: number, y1: number, x2: number, y2: number): string {
   const dx = Math.max(60, Math.abs(x2 - x1) / 2);
   return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
@@ -77,6 +90,8 @@ function configInicial(t: TipoNodo): Record<string, unknown> {
     case 'mensaje': return { texto: '' };
     case 'plantilla': return { plantilla: '', idioma: '', variables: [] };
     case 'ia': return { instrucciones: '', pausa_horas: 24 };
+    case 'archivo': return { archivo_id: 0, texto: '' };
+    case 'botones': return { texto: '', botones: ['', ''], cantidad: 12, unidad: 'horas', archivo_id: 0 };
     case 'esperar': return { cantidad: 1, unidad: 'horas' };
     case 'esperar_respuesta': return { cantidad: 12, unidad: 'horas' };
     case 'condicion': return { campo: 'mensaje', operador: 'contiene', valor: '' };
@@ -252,6 +267,40 @@ function configInicial(t: TipoNodo): Record<string, unknown> {
                   }
                 }
               }
+              @case ('archivo') {
+                <label>Archivo de la biblioteca
+                  <select (change)="cfgNum('archivo_id', $any($event.target).value)">
+                    <option value="0" [selected]="!n.config['archivo_id']">Elige…</option>
+                    @for (a of archivosLib(); track a.id) { <option [value]="a.id" [selected]="v(n, 'archivo_id') === '' + a.id">{{ a.nombre }} ({{ a.categoria }})</option> }
+                  </select>
+                </label>
+                @if (!archivosLib().length) { <small class="nota">Aún no hay archivos. Súbelos en CRM → Automatizaciones → Archivos para flujos.</small> }
+                <label>Texto que acompaña (opcional; no aplica a audios)<textarea rows="3" maxlength="1000" [value]="v(n, 'texto')" (input)="cfg('texto', $any($event.target).value)"></textarea></label>
+                <div class="vars"><small>Insertar:</small>@for (x of variables; track x.token) { <button type="button" class="chip" (click)="insertar(n, 'texto', x.token)">{{ x.etiqueta }}</button> }</div>
+                <small class="nota">Se envía dentro de las 24 horas del último mensaje del cliente. En Instagram, Meta puede rechazar documentos.</small>
+              }
+              @case ('botones') {
+                <label>Mensaje<textarea rows="4" maxlength="1024" [value]="v(n, 'texto')" (input)="cfg('texto', $any($event.target).value)"></textarea></label>
+                <small>Botones (de 1 a 3, hasta 20 caracteres)</small>
+                @for (bt of botonesDe(n); track $index; let i = $index) {
+                  <div class="fila-b">
+                    <input maxlength="20" [value]="bt" (input)="cfgBoton(n, i, $any($event.target).value)" />
+                    <button type="button" class="btn ico" title="Quitar botón" [disabled]="botonesDe(n).length <= 1" (click)="quitarBoton(n, i)">✕</button>
+                  </div>
+                }
+                @if (botonesDe(n).length < 3) { <button type="button" class="btn" (click)="agregarBoton(n)">+ Agregar botón</button> }
+                <label>Imagen o video arriba del mensaje (opcional)
+                  <select (change)="cfgNum('archivo_id', $any($event.target).value)">
+                    <option value="0" [selected]="!n.config['archivo_id']">Sin archivo</option>
+                    @for (a of archivosVisuales(); track a.id) { <option [value]="a.id" [selected]="v(n, 'archivo_id') === '' + a.id">{{ a.nombre }}</option> }
+                  </select>
+                </label>
+                <div class="dos">
+                  <label>Esperar hasta<input type="number" min="1" [value]="v(n, 'cantidad')" (input)="cfgNum('cantidad', $any($event.target).value)" /></label>
+                  <label>Unidad<select (change)="cfg('unidad', $any($event.target).value)">@for (u of unidades; track u.id) { <option [value]="u.id" [selected]="v(n, 'unidad') === u.id">{{ u.label }}</option> }</select></label>
+                </div>
+                <small class="nota">Cada botón tiene su salida en el lienzo. «Otra respuesta» sale si el cliente escribe otra cosa y «Sin respuesta» si pasa el tiempo. Solo funciona dentro de las 24 horas del último mensaje del cliente.</small>
+              }
               @case ('ia') {
                 <label>Instrucciones para esta conversación<textarea rows="7" maxlength="1500" [value]="v(n, 'instrucciones')" (input)="cfg('instrucciones', $any($event.target).value)"></textarea></label>
                 <label>Si pasa a una persona, la IA calla (horas)<input type="number" min="1" [value]="v(n, 'pausa_horas')" (input)="cfgNum('pausa_horas', $any($event.target).value)" /></label>
@@ -397,6 +446,7 @@ function configInicial(t: TipoNodo): Record<string, unknown> {
     input:focus, select:focus, textarea:focus { outline: 0; border-color: #2563eb; box-shadow: 0 0 0 3px rgb(37 99 235 / .15); }
     .chk { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; } .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .p-cab { display: flex; align-items: center; gap: 10px; } .p-cab div { display: flex; flex-direction: column; }
+    .fila-b { display: flex; gap: 6px; align-items: center; }
     .vars { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; } .chip { padding: 3px 10px; border: 1px solid #dbe2f0; border-radius: 999px; background: #f8faff; font: inherit; font-size: .74rem; cursor: pointer; } .chip:hover { background: #eef2ff; }
     .vista { padding: 10px 12px; border-radius: 10px; background: #f0f4ff; font-size: .82rem; white-space: pre-wrap; }
     .dias { display: flex; gap: 6px; } .dia { flex-direction: row; justify-content: center; width: 34px; height: 34px; align-items: center; border: 1px solid #cbd5e1; border-radius: 9px; cursor: pointer; } .dia.on { background: #2563eb; border-color: #2563eb; color: #fff; } .dia input { display: none; }
@@ -409,6 +459,7 @@ export class CrmFlujoEditorComponent implements OnInit {
   private readonly api: AutomatizacionesService = inject(AutomatizacionesService);
   private readonly crm: CrmService = inject(CrmService);
   private readonly ws: WhatsappService = inject(WhatsappService);
+  private readonly arch: ArchivosService = inject(ArchivosService);
   readonly flujoId = input.required<number>();
   readonly cerrar = output<void>();
   readonly cambio = output<void>();
@@ -445,6 +496,8 @@ export class CrmFlujoEditorComponent implements OnInit {
   readonly ejecutivos = signal<Ejecutivo[]>([]);
   readonly canalesDisp = signal<CanalCrm[]>([]);
   readonly plantillasWa = signal<Plantilla[] | null>(null);
+  readonly archivosLib = signal<ArchivoCrm[]>([]);
+  readonly archivosVisuales = computed<ArchivoCrm[]>(() => this.archivosLib().filter((a) => a.categoria === 'imagen' || a.categoria === 'video'));
   readonly nPasado = signal<number>(0);
   readonly nFuturo = signal<number>(0);
 
@@ -454,7 +507,7 @@ export class CrmFlujoEditorComponent implements OnInit {
   private pan: { sx: number; sy: number; vx: number; vy: number } | null = null;
   private snapEdicion = false;
 
-  readonly paleta = computed(() => PALETA.filter((t) => t !== 'plantilla' || this.canal() === 'whatsapp').map((t) => ({ tipo: t, ...META[t] })));
+  readonly paleta = computed(() => PALETA.filter((t) => (t !== 'plantilla' && t !== 'botones') || this.canal() === 'whatsapp').map((t) => ({ tipo: t, ...META[t] })));
   readonly nodoSel = computed<Nodo | null>(() => this.nodos().find((n) => n.id === this.sel()) ?? null);
   readonly canalNombre = computed<string>(() => ({ whatsapp: 'WhatsApp', facebook: 'Messenger', instagram: 'Instagram' })[this.canal()]);
   readonly canalesDelTipo = computed<CanalCrm[]>(() => this.canalesDisp().filter((c) => c.tipo === this.canal() && c.estado !== 'desconectado'));
@@ -505,7 +558,7 @@ export class CrmFlujoEditorComponent implements OnInit {
       const a = ns.get(c.de);
       const b = ns.get(c.a);
       if (!a || !b) return [];
-      const i = SALIDAS[a.tipo].findIndex((s) => s.id === c.salida);
+      const i = salidasDe(a).findIndex((s) => s.id === c.salida);
       if (i < 0) return [];
       const x1 = a.x + ANCHO, y1 = a.y + puertoY(a, i), x2 = b.x, y2 = b.y + alto(b) / 2;
       const key = `${c.de}|${c.salida}`;
@@ -519,7 +572,7 @@ export class CrmFlujoEditorComponent implements OnInit {
     const a = c ? this.nodos().find((n) => n.id === c.de) : null;
     if (!c || !a) return '';
     const r = this.raton();
-    return curva(a.x + ANCHO, a.y + puertoY(a, SALIDAS[a.tipo].findIndex((s) => s.id === c.salida)), r.x, r.y);
+    return curva(a.x + ANCHO, a.y + puertoY(a, salidasDe(a).findIndex((s) => s.id === c.salida)), r.x, r.y);
   });
 
   ngOnInit(): void {
@@ -536,13 +589,14 @@ export class CrmFlujoEditorComponent implements OnInit {
     this.crm.etapas().subscribe({ next: (l) => this.etapas.set(l.filter((e) => e.activa)), error: () => undefined });
     this.crm.ejecutivos().subscribe({ next: (l) => this.ejecutivos.set(l.filter((e) => e.activo)), error: () => undefined });
     this.ws.canales().subscribe({ next: (r) => this.canalesDisp.set(r.canales), error: () => undefined });
+    this.arch.lista().subscribe({ next: (l) => this.archivosLib.set(l), error: () => undefined });
   }
 
   // ---------------- Utilidades de presentación ----------------
   meta(n: Nodo): Meta { return META[n.tipo]; }
   nombreTipo(t: string): string { return META[t as TipoNodo]?.nombre ?? t; }
   titulo(n: Nodo): string { return String(n.config['rotulo'] || META[n.tipo].nombre); }
-  salidas(n: Nodo): { id: string; label: string }[] { return SALIDAS[n.tipo]; }
+  salidas(n: Nodo): { id: string; label: string }[] { return salidasDe(n); }
   conectada(id: string, salida: string): boolean { return this.conexiones().some((c) => c.de === id && c.salida === salida); }
   orden(id: string): number { return this.traza().findIndex((p) => p.nodo === id) + 1; }
   v(n: Nodo, k: string): string { const x = n.config[k]; return x === undefined || x === null ? '' : String(x); }
@@ -569,6 +623,8 @@ export class CrmFlujoEditorComponent implements OnInit {
       case 'mensaje': return corto(s('texto')) || 'Escribe el mensaje';
       case 'plantilla': return s('plantilla') || 'Elige una plantilla';
       case 'ia': return corto(s('instrucciones')) || 'Responde con tu información de empresa';
+      case 'archivo': return this.archivosLib().find((a) => a.id === Number(c['archivo_id']))?.nombre ?? 'Elige un archivo';
+      case 'botones': return corto(s('texto')) || 'Escribe el mensaje y los botones';
       case 'esperar': case 'esperar_respuesta': return `${s('cantidad') || '?'} ${UNIDADES.find((u) => u.id === s('unidad'))?.label ?? ''}`;
       case 'condicion':
         if (s('campo') === 'horario') return `${s('operador') === 'dentro' ? 'Dentro' : 'Fuera'} de ${s('desde')} a ${s('hasta')}`;
@@ -594,6 +650,15 @@ export class CrmFlujoEditorComponent implements OnInit {
       }
       case 'mensaje': return t('texto') ? '' : 'Escribe el mensaje';
       case 'plantilla': return t('plantilla') && t('idioma') ? '' : 'Elige una plantilla';
+      case 'archivo': return num('archivo_id') > 0 ? '' : 'Elige un archivo de la biblioteca';
+      case 'botones': {
+        const bs = Array.isArray(c['botones']) ? (c['botones'] as unknown[]).map((x) => String(x).trim()) : [];
+        if (!t('texto')) return 'Escribe el mensaje';
+        if (bs.length < 1 || bs.length > 3 || bs.some((x) => !x || x.length > 20)) return 'Escribe de 1 a 3 botones (hasta 20 caracteres)';
+        if (new Set(bs.map((x) => x.toLowerCase())).size !== bs.length) return 'Los botones deben ser distintos';
+        const seg = num('cantidad') * (UNIDAD_SEG[t('unidad')] ?? 0);
+        return seg >= 60 && seg <= 7 * 86400 ? '' : 'El tiempo debe ir de 1 minuto a 7 días';
+      }
       case 'esperar': case 'esperar_respuesta': {
         const seg = num('cantidad') * (UNIDAD_SEG[t('unidad')] ?? 0);
         const max = n.tipo === 'esperar' ? 30 * 86400 : 7 * 86400;
@@ -814,7 +879,7 @@ export class CrmFlujoEditorComponent implements OnInit {
     this.guardarHistorial();
     this.nodos.update((l) => [...l, nuevo]);
     if (!pos && base) {
-      const libre = SALIDAS[base.tipo].find((s) => !this.conectada(base.id, s.id));
+      const libre = salidasDe(base).find((s) => !this.conectada(base.id, s.id));
       if (libre) this.conexiones.update((l) => [...l, { de: base.id, salida: libre.id, a: nuevo.id }]);
     }
     this.tocar();
@@ -904,6 +969,25 @@ export class CrmFlujoEditorComponent implements OnInit {
   cfgLista(clave: string, valor: string): void { this.cfg(clave, valor.split(',').map((x) => x.trim()).filter(Boolean)); }
   insertar(n: Nodo, clave: string, token: string): void { this.cfg(clave, this.v(n, clave) + token); }
   cfgEjecutivo(valor: string): void { this.cfg('ejecutivo_id', valor === 'reparto' ? 'reparto' : Number(valor)); }
+  botonesDe(n: Nodo): string[] { const x = n.config['botones']; return Array.isArray(x) ? x.map(String) : []; }
+  cfgBoton(n: Nodo, i: number, valor: string): void { this.cfg('botones', this.botonesDe(n).map((x, j) => (j === i ? valor : x))); }
+  agregarBoton(n: Nodo): void { if (this.botonesDe(n).length < 3) this.cfg('botones', [...this.botonesDe(n), '']); }
+
+  quitarBoton(n: Nodo, i: number): void {
+    if (this.botonesDe(n).length <= 1) return;
+    this.guardarHistorial();
+    const nuevos = this.botonesDe(n).filter((_, j) => j !== i);
+    this.nodos.update((l) => l.map((x) => (x.id === n.id ? { ...x, config: { ...x.config, botones: nuevos } } : x)));
+    this.conexiones.update((l) => l.flatMap((c) => {  // la salida del botón quitado se borra y las siguientes se corren una posición
+      const m = c.de === n.id ? /^b(\d)$/.exec(c.salida) : null;
+      if (!m) return [c];
+      const k = Number(m[1]) - 1;
+      if (k === i) return [];
+      return [k > i ? { ...c, salida: `b${k}` } : c];
+    }));
+    this.tocar();
+  }
+
   cfgVariable(n: Nodo, i: number, valor: string): void { this.cfg('variables', this.variablesDe(n).map((x, j) => (j === i ? valor : x))); }
 
   cambiarCampo(campo: string): void {

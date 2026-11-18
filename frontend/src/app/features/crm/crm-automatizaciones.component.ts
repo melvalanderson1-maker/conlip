@@ -3,6 +3,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { ESTILOS_ADMIN } from '../../shared/estilos-admin';
 import { IconComponent } from '../../shared/icon.component';
 import { Canal } from './crm-whatsapp.service';
+import { ArchivoCrm, ArchivosService } from './crm-archivos.service';
 import { CrmFlujoEditorComponent } from './crm-flujo-editor.component';
 import {
   AutomatizacionesService, ConfigIa, Definicion, EjecucionFlujo, FlujoResumen, Nodo, PlantillaFlujo, RegistroFlujo, ResultadoPrueba,
@@ -116,6 +117,25 @@ function camposDe(n: Nodo): CampoNodo[] {
           </div>
         </article>
       } @empty { <p class="nota">Todavía no hay flujos. Crea el primero desde una plantilla.</p> }
+    </section>
+
+    <section class="card">
+      <div class="fila-sb">
+        <h3>Archivos para flujos</h3>
+        <label class="btn primary">Subir archivo
+          <input type="file" hidden accept="image/jpeg,image/png,video/mp4,video/3gpp,audio/mpeg,audio/ogg,audio/aac,audio/mp4,audio/amr,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" (change)="subirArchivo($any($event.target))" />
+        </label>
+      </div>
+      <p class="nota">Imágenes, audios, videos y documentos que tus flujos pueden enviar con el paso «Enviar archivo» o como imagen de un menú con botones. Máximo 16 MB (imágenes, 5 MB).</p>
+      @for (a of archivos(); track a.id) {
+        <article class="flujo">
+          <div class="f-t"><b>{{ a.nombre }}</b><small>{{ a.categoria }} · {{ tamano(a.tamano) }}</small></div>
+          <div class="fila">
+            <button type="button" class="btn" (click)="verArchivo(a)">Descargar</button>
+            <button type="button" class="btn peligro" (click)="borrarArchivo(a)"><app-icon name="trash" [size]="14" /></button>
+          </div>
+        </article>
+      } @empty { <p class="nota">Todavía no subiste archivos.</p> }
     </section>
 
     @if (editorId(); as eid) {
@@ -238,6 +258,8 @@ function camposDe(n: Nodo): CampoNodo[] {
 })
 export class CrmAutomatizacionesComponent implements OnInit {
   private readonly api: AutomatizacionesService = inject(AutomatizacionesService);
+  private readonly arch: ArchivosService = inject(ArchivosService);
+  readonly archivos = signal<ArchivoCrm[]>([]);
   readonly canales = CANALES;
   readonly unidades = UNIDADES;
   readonly camposDe = camposDe;
@@ -285,6 +307,7 @@ export class CrmAutomatizacionesComponent implements OnInit {
   ngOnInit(): void {
     this.cargar();
     this.api.plantillas().subscribe({ next: (p) => this.plantillas.set(p), error: (e: HttpErrorResponse) => this.fallo(e) });
+    this.cargarArchivos();
     this.cargarIa();
   }
 
@@ -303,6 +326,40 @@ export class CrmAutomatizacionesComponent implements OnInit {
   fecha(iso: string): string { return new Date(iso).toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); }
 
   cargar(): void { this.api.lista().subscribe({ next: (l) => this.flujos.set(l), error: (e: HttpErrorResponse) => this.fallo(e) }); }
+
+// ---------------- Archivos para flujos ----------------
+  tamano(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
+
+  cargarArchivos(): void { this.arch.lista().subscribe({ next: (l) => this.archivos.set(l), error: (e: HttpErrorResponse) => this.fallo(e) }); }
+
+  subirArchivo(input: HTMLInputElement): void {
+    const f = input.files?.[0];
+    input.value = '';
+    if (!f) return;
+    if (f.size > 16 * 1024 * 1024) { this.falla('El archivo es demasiado grande (máximo 16 MB; imágenes 5 MB).'); return; }
+    this.ocupado.set(true);
+    this.arch.subir(f).subscribe({
+      next: () => { this.ocupado.set(false); this.ok('Archivo subido'); this.cargarArchivos(); },
+      error: (e: HttpErrorResponse) => this.fallo(e),
+    });
+  }
+
+  verArchivo(a: ArchivoCrm): void {
+    this.arch.contenido(a.id).subscribe({
+      next: (b) => {
+        const url = URL.createObjectURL(b);
+        const x = document.createElement('a');
+        x.href = url; x.download = a.nombre; x.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      },
+      error: (e: HttpErrorResponse) => this.fallo(e),
+    });
+  }
+
+  borrarArchivo(a: ArchivoCrm): void {
+    if (!confirm(`¿Eliminar «${a.nombre}» de la biblioteca?`)) return;
+    this.arch.borrar(a.id).subscribe({ next: () => { this.ok('Archivo eliminado'); this.cargarArchivos(); }, error: (e: HttpErrorResponse) => this.fallo(e) });
+  }
 
   // ---------------- IA ----------------
   private cargarIa(): void {

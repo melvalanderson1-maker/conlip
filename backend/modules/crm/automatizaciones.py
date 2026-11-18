@@ -18,7 +18,7 @@ BASE_VACIA = {"nodos": [{"id": "n1", "tipo": "disparador", "x": 40, "y": 120, "c
 
 class NodoIn(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,19}$")
-    tipo: Literal["disparador", "mensaje", "plantilla", "ia", "esperar", "esperar_respuesta", "condicion", "asignar", "etapa", "nota", "tarea", "fin"]
+    tipo: Literal["disparador", "mensaje", "plantilla", "ia", "esperar", "esperar_respuesta", "condicion", "asignar", "etapa", "nota", "tarea", "fin", "archivo", "botones"]
     x: float = Field(ge=-5000, le=30000)
     y: float = Field(ge=-5000, le=30000)
     config: dict = Field(default_factory=dict)

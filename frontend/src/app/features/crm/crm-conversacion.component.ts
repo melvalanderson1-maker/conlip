@@ -4,6 +4,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { TiempoRealService } from '../../core/tiempo-real.service';
 import { IconComponent } from '../../shared/icon.component';
 import { Canal, CanalInfo, Conversacion, Mensaje, Plantilla, WhatsappService } from './crm-whatsapp.service';
+import { ArchivosService } from './crm-archivos.service';
 
 const ZONA = 'America/Lima';
 const ESTADOS: Record<string, string> = { recibido: '', enviado: 'Enviado', entregado: 'Entregado', leido: 'Leído', fallido: 'No se entregó' };
@@ -49,7 +50,13 @@ const NOMBRES: Record<Canal, string> = { whatsapp: 'WhatsApp', facebook: 'Messen
                       @if (imagenes()[m.id]; as u) { <img class="img" [src]="u" alt="Imagen enviada" /> }
                       @else { <button type="button" class="btn" (click)="cargarImagen(m)">Ver imagen</button> }
                     } @else {
-                      <button type="button" class="btn" (click)="descargar(m)">{{ m.media_nombre || (m.tipo === 'audio' ? 'Escuchar audio' : 'Descargar archivo') }}</button>
+                      @if (m.tipo === 'audio' || m.tipo === 'video') {
+                      @if (imagenes()[m.id]; as u) {
+                        @if (m.tipo === 'audio') { <audio controls class="aud" [src]="u"></audio> } @else { <video controls class="img" [src]="u"></video> }
+                      } @else { <button type="button" class="btn" (click)="cargarImagen(m)">{{ m.tipo === 'audio' ? 'Escuchar audio' : 'Ver video' }}</button> }
+                    } @else {
+                      <button type="button" class="btn" (click)="descargar(m)">{{ m.media_nombre || 'Descargar archivo' }}</button>
+                    }
                     }
                   }
                   @if (m.texto) { <p>{{ m.texto }}</p> }
@@ -61,7 +68,17 @@ const NOMBRES: Record<Canal, string> = { whatsapp: 'WhatsApp', facebook: 'Messen
 
             @if (error()) { <p class="error">{{ error() }}</p> }
             @if (i.puede_texto_libre) {
+              @if (archivo(); as f) {
+                <div class="adjunto">
+                  <span>📎 {{ f.name }} ({{ tamano(f.size) }})</span>
+                  <input class="cap" maxlength="1000" placeholder="Texto que acompaña al archivo (opcional)" [value]="pie()" (input)="pie.set($any($event.target).value)" />
+                  <button type="button" class="btn primary" [disabled]="enviando()" (click)="enviarArchivo()">Enviar archivo</button>
+                  <button type="button" class="btn" (click)="archivo.set(null)">Quitar</button>
+                </div>
+              }
               <div class="compositor">
+                <button type="button" class="btn ico" title="Adjuntar imagen, audio, video o documento" (click)="adjuntar.click()">📎</button>
+                <input #adjuntar type="file" hidden accept="image/jpeg,image/png,video/mp4,video/3gpp,audio/mpeg,audio/ogg,audio/aac,audio/mp4,audio/amr,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" (change)="elegirArchivo($any($event.target))" />
                 <textarea rows="2" maxlength="4000" placeholder="Escribe tu respuesta (Enter envía, Shift+Enter hace un salto de línea)"
                           [value]="texto()" (input)="texto.set($any($event.target).value)" (keydown.enter)="enter($event)"></textarea>
                 <button type="button" class="btn primary" [disabled]="enviando() || !texto().trim()" (click)="enviar()">Enviar</button>
@@ -117,7 +134,10 @@ const NOMBRES: Record<Canal, string> = { whatsapp: 'WhatsApp', facebook: 'Messen
     .burbuja.sal { align-self: flex-end; border-radius: 12px 12px 4px 12px; background: #d9fdd3; } .burbuja.mal { background: #fee2e2; }
     .burbuja p { margin: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.4; } .burbuja small { color: var(--muted); font-size: .7rem; } .burbuja small.err { color: #b91c1c; font-weight: 600; }
     .img { max-width: 100%; max-height: 220px; border-radius: 8px; object-fit: cover; }
-    .compositor { display: flex; gap: 8px; align-items: flex-end; } .compositor textarea { flex: 1; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 12px; font: inherit; resize: none; }
+    .compositor { display: flex; gap: 8px; align-items: flex-end; }
+    .adjunto { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px dashed #93a8e6; border-radius: 12px; background: #f8faff; font-size: .84rem; }
+    .adjunto .cap { flex: 1; min-width: 160px; height: 36px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 10px; font: inherit; }
+    .aud { max-width: 100%; height: 36px; } .compositor textarea { flex: 1; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 12px; font: inherit; resize: none; }
     .nota { margin: 0; color: var(--muted); font-size: .88rem; } .error { margin: 0; padding: 8px 12px; border-radius: 10px; background: #fef2f2; color: #b91c1c; font-size: .86rem; }
     .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: #0f172a; font: inherit; font-size: .84rem; font-weight: 600; cursor: pointer; }
     .btn.primary { color: #fff; border-color: transparent; background: linear-gradient(135deg, #1d4ed8, #2f6bff); } .btn:disabled { opacity: .5; cursor: not-allowed; } .btn.ico { width: 36px; padding: 0; }
@@ -131,6 +151,7 @@ const NOMBRES: Record<Canal, string> = { whatsapp: 'WhatsApp', facebook: 'Messen
 })
 export class CrmConversacionComponent implements OnInit {
   private readonly api: WhatsappService = inject(WhatsappService);
+  private readonly arch: ArchivosService = inject(ArchivosService);
   private readonly rt: TiempoRealService = inject(TiempoRealService);
   private readonly destroyRef: DestroyRef = inject(DestroyRef);
   readonly leadId = input.required<number>();
@@ -142,6 +163,8 @@ export class CrmConversacionComponent implements OnInit {
   readonly enviando = signal<boolean>(false);
   readonly error = signal<string>('');
   readonly imagenes = signal<Record<number, string>>({});
+  readonly archivo = signal<File | null>(null);
+  readonly pie = signal<string>('');
   readonly modal = signal<boolean>(false);
   readonly plantillas = signal<Plantilla[] | null>(null);
   readonly sel = signal<Plantilla | null>(null);
@@ -226,6 +249,28 @@ export class CrmConversacionComponent implements OnInit {
         setTimeout(() => URL.revokeObjectURL(url), 10_000);
       },
       error: (e: HttpErrorResponse) => this.error.set(this.msg(e)),
+    });
+  }
+
+  tamano(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
+
+  elegirArchivo(input: HTMLInputElement): void {
+    const f = input.files?.[0] ?? null;
+    input.value = '';
+    if (!f) return;
+    if (f.size > 16 * 1024 * 1024) { this.error.set('El archivo es demasiado grande (máximo 16 MB; imágenes 5 MB).'); return; }
+    this.error.set('');
+    this.archivo.set(f);
+  }
+
+  enviarArchivo(): void {
+    const f = this.archivo();
+    if (!f || this.enviando()) return;
+    this.enviando.set(true);
+    this.error.set('');
+    this.arch.enviarALead(this.leadId(), f, this.canal(), this.pie().trim()).subscribe({
+      next: () => { this.enviando.set(false); this.archivo.set(null); this.pie.set(''); this.cargar(); },
+      error: (e: HttpErrorResponse) => { this.enviando.set(false); this.error.set(this.msg(e)); this.cargar(); },
     });
   }
 

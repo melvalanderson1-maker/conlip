@@ -11,6 +11,7 @@ import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from core import archivos as ar
 from core import canales as cn
 from core import ia
 from core import meta_social as ms
@@ -30,6 +31,7 @@ SALIDAS = {
     "disparador": ("siguiente",), "mensaje": ("siguiente", "error"), "plantilla": ("siguiente", "error"),
     "ia": ("siguiente", "humano", "error"), "esperar": ("siguiente",), "esperar_respuesta": ("respondio", "tiempo"),
     "condicion": ("si", "no"), "asignar": ("siguiente",), "etapa": ("siguiente",), "nota": ("siguiente",),
+    "archivo": ("siguiente", "error"), "botones": ("b1", "b2", "b3", "otro", "tiempo", "error"),
     "tarea": ("siguiente",), "fin": (),
 }
 HORA = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -85,6 +87,19 @@ def _config_ok(n: dict, canal: str) -> str | None:
                 return f"La condición {nombre} necesita horas con formato HH:MM."
         elif c.get("operador") not in OPERADORES or (c["operador"] not in ("vacio", "no_vacio") and not str(c.get("valor", "")).strip()):
             return f"La condición {nombre} necesita operador y valor."
+    elif t == "archivo":
+        if not _int(c.get("archivo_id")):
+            return f"El paso {nombre} necesita un archivo de la biblioteca."
+    elif t == "botones":
+        bs = [str(b).strip() for b in c.get("botones", [])]
+        if canal != "whatsapp":
+            return "Los botones solo existen en WhatsApp."
+        if not str(c.get("texto", "")).strip() or len(str(c.get("texto", ""))) > 1024:
+            return f"El mensaje de botones {nombre} necesita texto (máximo 1024 caracteres)."
+        if not 1 <= len(bs) <= 3 or any(not b or len(b) > 20 for b in bs) or len({_norm(b) for b in bs}) != len(bs):
+            return f"El paso {nombre} necesita de 1 a 3 botones distintos, con texto de hasta 20 caracteres."
+        if not 60 <= _segundos(c) <= 7 * 86400:
+            return f"El tiempo de espera {nombre} debe ir de 1 minuto a 7 días."
     elif t == "asignar" and c.get("ejecutivo_id") != "reparto" and not _int(c.get("ejecutivo_id")):
         return f"El paso {nombre} necesita un ejecutivo (o «reparto»)."
     elif t == "etapa" and not _int(c.get("etapa_id")):
@@ -226,6 +241,15 @@ def simular(defn: dict, canal: str, mensaje: str, respuesta: str = "", sin_respu
             salida, detalle = ("si", "Se cumple.") if ok else ("no", "No se cumple.")
         elif t == "asignar":
             detalle = "Asignaría al ejecutivo elegido." if c.get("ejecutivo_id") != "reparto" else "Asignaría según el reparto rotativo."
+        elif t == "archivo":
+            detalle = "Enviaría el archivo elegido de la biblioteca."
+        elif t == "botones":
+            if sin_respuesta:
+                salida, detalle = "tiempo", "El cliente no toca ningún botón a tiempo."
+            else:
+                v["mensaje"] = respuesta or mensaje
+                salida = _salida_botones(nodo, v["mensaje"])
+                detalle = f"Enviaría «{_render(str(c.get('texto', '')), v)}» con los botones {' | '.join(str(b) for b in c.get('botones', []))}. El cliente toca: «{v['mensaje']}»"
         elif t == "etapa":
             detalle = "Cambiaría la etapa del lead."
         elif t in ("nota", "tarea"):
@@ -302,6 +326,8 @@ def _ejecutar_nodo(con, ej, f, nodo: dict, ctx: dict, avisar: set) -> tuple:
     """Devuelve ('seguir', salida, detalle) | ('espera', cuando, estado, salida_al_vencer) | ('reintentar', segundos)."""
     t, c, lid = nodo["tipo"], nodo.get("config") or {}, ej["lead_id"]
     v = _variables(con, lid, ctx)
+    if t in ("archivo", "botones"):
+        return _ejecutar_extra(con, f, nodo, ctx, lid, v)
     if t == "disparador":
         return ("seguir", "siguiente", "")
     if t in ("mensaje", "plantilla"):
@@ -376,6 +402,33 @@ def _ejecutar_nodo(con, ej, f, nodo: dict, ctx: dict, avisar: set) -> tuple:
     return ("seguir", "siguiente", "")  # «fin» y desconocidos: se cierra al no haber conexión
 
 
+def _salida_botones(nodo: dict, texto: str) -> str:
+    """Qué botón tocó el cliente (por su título); «otro» si escribió otra cosa."""
+    t = _norm(texto)
+    for i, b in enumerate((nodo.get("config") or {}).get("botones", [])[:3]):
+        if t and _norm(str(b)) == t:
+            return f"b{i + 1}"
+    return "otro"
+
+
+def _ejecutar_extra(con, f, nodo: dict, ctx: dict, lid: int, v: dict) -> tuple:
+    """Nodos «Enviar archivo» y «Botones de WhatsApp»."""
+    t, c = nodo["tipo"], nodo.get("config") or {}
+    try:
+        a = con.execute("SELECT * FROM crm_archivos WHERE id=?", (_int(c.get("archivo_id")),)).fetchone() if _int(c.get("archivo_id")) else None
+        if t == "archivo":
+            if not a:
+                raise wa.ErrorWa("El archivo ya no existe en la biblioteca.")
+            ar.enviar_a_lead(con, lid, f["canal"], a, _render(str(c.get("texto", "")), v), AUTOR)
+            return ("seguir", "siguiente", f"Archivo enviado: {a['nombre']}")
+        ar.enviar_botones_a_lead(con, lid, _render(str(c.get("texto", "")), v), [str(b).strip() for b in c.get("botones", [])], a, AUTOR)
+        cuando = datetime.now(ZONA) + timedelta(seconds=max(60, _segundos(c)))
+        return ("espera", cuando, "esperando_respuesta", "tiempo")  # al responder, _correr elige la salida según el botón
+    except wa.ErrorWa as e:
+        ctx["ultimo_error"] = str(e)
+        return ("seguir", "error", str(e))
+
+
 def _log(con, ej_id: int, nodo: dict, r: tuple) -> None:
     if r[0] == "seguir":
         salida, detalle = r[1], r[2]
@@ -419,6 +472,8 @@ def _correr(ej_id: int) -> None:
             if nodo is None:
                 return _cerrar(con, ej_id, "error", "El flujo cambió y este paso ya no existe", ctx)
             if pend is not None:
+                if nodo["tipo"] == "botones" and pend == "respondio":
+                    pend = _salida_botones(nodo, ctx.get("mensaje", ""))
                 r, pend = ("seguir", pend, ""), None
             else:
                 r = _ejecutar_nodo(con, ej, f, nodo, ctx, avisar)
@@ -637,6 +692,18 @@ PLANTILLAS = [
          _n("n6", "tarea", 880, 240, rotulo="Tarea de llamada", texto="Llamar a {{nombre}}: no respondió al seguimiento", horas=2),
          _n("n7", "fin", 1160, 240, rotulo="Fin")],
          "conexiones": [_c("n1", "n2"), _c("n2", "n3"), _c("n2", "n6", "error"), _c("n3", "n4", "respondio"), _c("n3", "n6", "tiempo"), _c("n4", "n5"), _c("n6", "n7")]}},
+    {"id": "menu_botones", "nombre": "Menú con botones de WhatsApp",
+     "descripcion": "Saluda con 3 botones. Según el que toque, responde y asigna un ejecutivo; si no elige nada, deja una nota.",
+     "definicion": {"nodos": [
+         _n("n1", "disparador", 40, 240, rotulo="Primer mensaje", evento="mensaje_entrante", solo_primero=True, repetir_horas=24),
+         _n("n2", "botones", 320, 180, rotulo="Menú", texto="¡Hola! ¿Qué te interesa?", botones=["Información", "Precios", "Hablar con alguien"], cantidad=12, unidad="horas", archivo_id=0),
+         _n("n3", "mensaje", 640, 0, rotulo="Información", texto="Con gusto te contamos más. Un ejecutivo te enviará la información en breve."),
+         _n("n4", "mensaje", 640, 140, rotulo="Precios", texto="Un ejecutivo te enviará los precios en breve."),
+         _n("n6", "asignar", 960, 200, rotulo="Pasar a un ejecutivo", ejecutivo_id="reparto"),
+         _n("n7", "nota", 640, 420, rotulo="Sin elegir", texto="El cliente no eligió ninguna opción del menú."),
+         _n("n8", "fin", 960, 420, rotulo="Fin"), _n("n9", "fin", 1240, 200, rotulo="Fin")],
+         "conexiones": [_c("n1", "n2"), _c("n2", "n3", "b1"), _c("n2", "n4", "b2"), _c("n2", "n6", "b3"), _c("n2", "n6", "otro"),
+                        _c("n2", "n7", "tiempo"), _c("n3", "n6"), _c("n4", "n6"), _c("n6", "n9"), _c("n7", "n8")]}},
     {"id": "asistente_ia", "nombre": "Asistente con IA y traspaso a humano",
      "descripcion": "La IA responde cada mensaje con la información de tu empresa. Si el cliente pide una persona o se molesta, asigna un ejecutivo y la IA calla 24 horas.",
      "definicion": {"nodos": [

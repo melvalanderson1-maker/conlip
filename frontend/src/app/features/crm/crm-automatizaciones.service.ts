@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import { API } from '../../core/api';
 import { Canal } from './crm-whatsapp.service';
 
-export type TipoNodo = 'disparador' | 'mensaje' | 'plantilla' | 'ia' | 'esperar' | 'esperar_respuesta' | 'condicion' | 'asignar' | 'etapa' | 'nota' | 'tarea' | 'fin';
+export type TipoNodo = 'disparador' | 'mensaje' | 'plantilla' | 'ia' | 'esperar' | 'esperar_respuesta' | 'condicion' | 'asignar' | 'etapa' | 'nota' | 'tarea' | 'fin' | 'archivo' | 'botones';
 export interface Nodo { id: string; tipo: TipoNodo; x: number; y: number; config: Record<string, unknown>; }
 export interface Conexion { de: string; salida: string; a: string; }
 export interface Definicion { nodos: Nodo[]; conexiones: Conexion[]; }

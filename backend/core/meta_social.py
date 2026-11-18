@@ -181,6 +181,20 @@ def enviar(canal: str, destinatario: str, texto: str) -> str:
     return r["message_id"]
 
 
+def enviar_adjunto(canal: str, destinatario: str, categoria: str, url: str) -> str:
+    """Envía una imagen, audio, video o archivo por Messenger o Instagram. Meta descarga el archivo desde `url` (debe ser pública)."""
+    tipo = {"imagen": "image", "audio": "audio", "video": "video", "documento": "file"}[categoria]
+    c = _obligatoria(canal)
+    if canal == "instagram":
+        r = _graph("POST", f"/{c['ig_id'] if c['ig_token'] else c['page_id']}/messages",
+                   {"recipient": {"id": destinatario}, "message": {"attachment": {"type": tipo, "payload": {"url": url}}}}, canal="instagram")
+    else:
+        r = _graph("POST", f"/{c['page_id']}/messages",
+                   {"recipient": {"id": destinatario}, "messaging_type": "RESPONSE",
+                    "message": {"attachment": {"type": tipo, "payload": {"url": url, "is_reusable": True}}}})
+    return r["message_id"]
+
+
 def enviar_a_lead(con, lead_id: int, canal: str, texto: str, usuario: str) -> int:
     """Responde a un lead por su canal, respetando la ventana de 24 h. Guarda el mensaje y devuelve su id."""
     if canal not in COLUMNAS:
