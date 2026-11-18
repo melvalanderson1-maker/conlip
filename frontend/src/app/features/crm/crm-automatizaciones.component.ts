@@ -3,6 +3,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { ESTILOS_ADMIN } from '../../shared/estilos-admin';
 import { IconComponent } from '../../shared/icon.component';
 import { Canal } from './crm-whatsapp.service';
+import { CrmFlujoEditorComponent } from './crm-flujo-editor.component';
 import {
   AutomatizacionesService, ConfigIa, Definicion, EjecucionFlujo, FlujoResumen, Nodo, PlantillaFlujo, RegistroFlujo, ResultadoPrueba,
 } from './crm-automatizaciones.service';
@@ -54,7 +55,7 @@ function camposDe(n: Nodo): CampoNodo[] {
 
 @Component({
   selector: 'app-crm-automatizaciones',
-  imports: [IconComponent],
+  imports: [IconComponent, CrmFlujoEditorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (mensaje()) { <p class="ok"><app-icon name="circle-check" [size]="18" /> {{ mensaje() }}</p> }
@@ -106,6 +107,7 @@ function camposDe(n: Nodo): CampoNodo[] {
           <span class="tag" [class.si]="f.estado === 'publicado'">{{ f.estado === 'publicado' ? 'Publicado' : 'Borrador' }}</span>
           <div class="fila">
             <button type="button" class="btn" (click)="abrirPrueba(f)">Probar</button>
+            <button type="button" class="btn primary" (click)="editorId.set(f.id)">Abrir editor</button>
             <button type="button" class="btn" (click)="abrirEdicion(f)">Editar textos</button>
             <button type="button" class="btn" (click)="abrirEjecuciones(f)">Ejecuciones</button>
             @if (f.estado === 'publicado' && !f.cambios_sin_publicar) { <button type="button" class="btn" (click)="pausar(f)">Pausar</button> }
@@ -115,6 +117,10 @@ function camposDe(n: Nodo): CampoNodo[] {
         </article>
       } @empty { <p class="nota">Todavía no hay flujos. Crea el primero desde una plantilla.</p> }
     </section>
+
+    @if (editorId(); as eid) {
+      <app-crm-flujo-editor [flujoId]="eid" (cerrar)="editorId.set(null)" (cambio)="cargar()" />
+    }
 
     @if (nuevo()) {
       <div class="overlay" (click)="nuevo.set(false)">
@@ -253,6 +259,7 @@ export class CrmAutomatizacionesComponent implements OnInit {
 
   // Nuevo flujo
   readonly nuevo = signal<boolean>(false);
+  readonly editorId = signal<number | null>(null);
   readonly nNombre = signal<string>('');
   readonly nCanal = signal<Canal>('whatsapp');
   readonly nPlantilla = signal<string>('bienvenida');
@@ -330,7 +337,7 @@ export class CrmAutomatizacionesComponent implements OnInit {
     if (this.nNombre().trim().length < 2) { this.falla('Escribe un nombre para el flujo'); return; }
     this.ocupado.set(true);
     this.api.crear({ nombre: this.nNombre().trim(), canal: this.nCanal(), plantilla: this.nPlantilla() || null }).subscribe({
-      next: () => { this.ocupado.set(false); this.nuevo.set(false); this.ok('Flujo creado como borrador. Pruébalo y publícalo cuando esté listo.'); this.cargar(); },
+      next: (r) => { this.ocupado.set(false); this.nuevo.set(false); this.ok('Flujo creado como borrador.'); this.cargar(); this.editorId.set(r.id); },
       error: (e: HttpErrorResponse) => this.fallo(e),
     });
   }
