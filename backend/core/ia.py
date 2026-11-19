@@ -14,7 +14,7 @@ logger = logging.getLogger("ia")
 ZONA = ZoneInfo("America/Lima")
 
 PROVEEDORES = {
-    "gemini": {"nombre": "Google Gemini", "modelo": "gemini-2.5-flash", "gratis": True, "pausa": 7.0, "url_clave": "aistudio.google.com/apikey"},
+    "gemini": {"nombre": "Google Gemini", "modelo": "gemini-3.8-flash", "gratis": True, "pausa": 7.0, "url_clave": "aistudio.google.com/apikey"},
     "groq": {"nombre": "Groq (Llama 3.3)", "modelo": "llama-3.3-70b-versatile", "gratis": True, "pausa": 2.5, "url_clave": "console.groq.com/keys"},
     "openrouter": {"nombre": "OpenRouter", "modelo": "meta-llama/llama-3.3-70b-instruct:free", "gratis": True, "pausa": 3.5, "url_clave": "openrouter.ai/keys"},
     "anthropic": {"nombre": "Claude (Anthropic)", "modelo": "claude-haiku-5-5", "gratis": False, "pausa": 0.5, "url_clave": "console.anthropic.com"},
@@ -42,7 +42,8 @@ def config() -> dict:
     if p not in PROVEEDORES:
         p = "gemini"
     instr = leer("ia_instrucciones")
-    return {"proveedor": p, "modelo": leer("ia_modelo") or PROVEEDORES[p]["modelo"], "clave": leer("ia_clave"),
+    modelo = (leer("ia_modelo") or "").strip().removeprefix("models/")
+    return {"proveedor": p, "modelo": modelo or PROVEEDORES[p]["modelo"], "clave": leer("ia_clave"),
             "instrucciones": "" if instr == "-" else instr, "max_dia": int(leer("ia_max_dia") or 200)}
 
 
