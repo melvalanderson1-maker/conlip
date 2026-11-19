@@ -78,6 +78,17 @@ function camposDe(n: Nodo): CampoNodo[] {
             </select>
           </label>
           <label>Modelo <input [value]="fm()" (input)="fm.set($any($event.target).value)" /></label>
+          <div class="modelos ancho2">
+            <button type="button" class="btn" [disabled]="ocupado()" (click)="verModelos()">Ver modelos disponibles para mi clave</button>
+            @if (listaModelos().length) {
+              <select aria-label="Modelos disponibles" (change)="elegirModelo($any($event.target).value)">
+                <option value="">Elige uno de la lista…</option>
+                @for (m of listaModelos(); track m.id) {
+                  <option [value]="m.id" [selected]="fm() === m.id">{{ m.id }}{{ m.recomendado ? ' · recomendado (plan gratuito)' : '' }}</option>
+                }
+              </select>
+            }
+          </div>
           <label>Clave de API
             <input type="password" autocomplete="new-password" [value]="fk()" (input)="fk.set($any($event.target).value)" [placeholder]="c.clave_guardada ? 'Guardada. Escribe solo para cambiarla' : 'Pega la clave'" />
           </label>
@@ -244,6 +255,8 @@ function camposDe(n: Nodo): CampoNodo[] {
   `,
   styles: [ESTILOS_ADMIN, `
     .fila-sb { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .modelos { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .modelos select { flex: 1; min-width: 240px; }
     .ancho2 { grid-column: 1 / -1; } textarea { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 12px; font: inherit; resize: vertical; }
     .flujo { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
     .f-t { display: flex; flex-direction: column; gap: 2px; min-width: 200px; flex: 1; } .f-t small { color: var(--muted); } .aviso-t { color: #b45309 !important; font-weight: 600; }
@@ -277,6 +290,7 @@ export class CrmAutomatizacionesComponent implements OnInit {
   readonly fk = signal<string>('');
   readonly fx = signal<string>('');
   readonly fd = signal<string>('200');
+  readonly listaModelos = signal<{ id: string; recomendado: boolean }[]>([]);
   readonly urlClave = computed<string>(() => this.cfgIa()?.proveedores.find((p) => p.id === this.fp())?.url_clave ?? '');
 
   // Nuevo flujo
@@ -371,6 +385,7 @@ export class CrmAutomatizacionesComponent implements OnInit {
 
   cambiarProveedor(p: string): void {
     this.fp.set(p);
+    this.listaModelos.set([]);
     this.fm.set(this.cfgIa()?.proveedores.find((x) => x.id === p)?.modelo ?? '');
   }
 
@@ -381,6 +396,20 @@ export class CrmAutomatizacionesComponent implements OnInit {
       error: (e: HttpErrorResponse) => this.fallo(e),
     });
   }
+
+  verModelos(): void {
+    this.ocupado.set(true);
+    this.api.modelosIa(this.fp(), this.fk().trim()).subscribe({
+      next: (r) => {
+        this.ocupado.set(false);
+        this.listaModelos.set(r.modelos);
+        this.ok(`Tu clave puede usar ${r.modelos.length} modelos. Elige uno de la lista y pulsa «Guardar».`);
+      },
+      error: (e: HttpErrorResponse) => this.fallo(e),
+    });
+  }
+
+  elegirModelo(id: string): void { if (id) this.fm.set(id); }
 
   probarIa(): void {
     this.ocupado.set(true);

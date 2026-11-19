@@ -45,4 +45,7 @@ export class AutomatizacionesService {
     return this.http.put(`${BASE}/ia/config`, d);
   }
   probarIa(): Observable<{ ok: boolean; detalle: string }> { return this.http.post<{ ok: boolean; detalle: string }>(`${BASE}/ia/probar`, {}); }
+  modelosIa(proveedor: string, clave: string): Observable<{ modelos: { id: string; recomendado: boolean }[] }> {
+    return this.http.post<{ modelos: { id: string; recomendado: boolean }[] }>(`${BASE}/ia/modelos`, { proveedor, clave });
+  }
 }

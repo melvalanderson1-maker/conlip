@@ -137,6 +137,20 @@ def ia_probar():
     return {"ok": True, "detalle": f"La IA respondió: «{texto[:80]}»"}
 
 
+class IaModelosIn(BaseModel):
+    proveedor: Literal["gemini", "groq", "openrouter", "anthropic"]
+    clave: str = Field(default="", max_length=300)
+
+
+@router.post("/ia/modelos")
+def ia_modelos(d: IaModelosIn):
+    """Lista los modelos que puede usar la clave (la que escribiste o, si la dejas vacía, la guardada)."""
+    try:
+        return {"modelos": ia.listar_modelos(d.proveedor, d.clave.strip())}
+    except ia.ErrorIA as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/ejecuciones/{eid}/registros")
 def registros(eid: int):
     con = abrir_db()
