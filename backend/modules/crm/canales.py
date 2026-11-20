@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Literal
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,16 +26,21 @@ logger = logging.getLogger("canales_crm")
 router = APIRouter(prefix="/api/integraciones/canales", tags=["canales"], dependencies=[Depends(solo_superadmin)])
 router_callback = APIRouter(prefix="/api/integraciones/oauth", tags=["canales-oauth"])
 
-SCOPES = (
-    "pages_show_list,pages_messaging,pages_manage_metadata,pages_read_engagement,instagram_basic,"
-    "instagram_manage_messages,leads_retrieval,whatsapp_business_management,whatsapp_business_messaging,business_management"
-)
+SCOPES = {
+    "facebook": "pages_show_list,pages_messaging,pages_manage_metadata,pages_read_engagement,leads_retrieval,business_management",
+    "instagram": "pages_show_list,pages_messaging,pages_manage_metadata,pages_read_engagement,instagram_basic,instagram_manage_messages,business_management",
+    "whatsapp": "whatsapp_business_management,whatsapp_business_messaging,business_management",
+}
 MINUTOS_SESION = 30
 
 
 class AppIn(BaseModel):
     app_id: str = Field(default="", max_length=30)
     config_id: str = Field(default="", max_length=30)
+
+
+class IniciarIn(BaseModel):
+    plataforma: Literal["facebook", "instagram", "whatsapp"] = "facebook"
 
 
 class TokenWaIn(BaseModel):
@@ -51,6 +57,7 @@ class ConectarIn(BaseModel):
     paginas: list[str] = Field(default_factory=list, max_length=50)
     instagram: list[str] = Field(default_factory=list, max_length=50)  # ids de cuentas de Instagram (de páginas elegidas)
     numeros: list[NumeroSel] = Field(default_factory=list, max_length=50)
+    con_messenger: bool = True  # False al conectar solo Instagram: no se crea también el canal de Messenger
 
 
 class RenombrarIn(BaseModel):
@@ -96,19 +103,39 @@ def _graph(token: str | None, ruta: str, consulta: dict | None = None, metodo: s
         raise HTTPException(400, "No se pudo contactar a Meta. Inténtalo de nuevo.")
 
 
-def _firmar_estado(usuario: str) -> str:
-    return jwt.encode({"u": usuario, "t": "oauth-canales", "exp": int(time.time()) + 600}, jwt_secreto(), algorithm="HS256")
+def _app_id() -> str:
+    """App ID de tu app de Meta: el guardado o, si falta, el que se deduce de los tokens que ya tienes guardados."""
+    a = (leer("meta_app_id") or os.getenv("META_APP_ID", "")).strip()
+    if a:
+        return a
+    for clave in ("wa_token", "meta_page_token", "meta_ig_token"):
+        t = leer(clave)
+        if not t:
+            continue
+        try:
+            d = _graph(t, "/debug_token", {"input_token": t}).get("data", {})
+        except HTTPException:
+            continue
+        if str(d.get("app_id", "")).isdigit():
+            if clave_ok():
+                guardar("meta_app_id", str(d["app_id"]))
+            return str(d["app_id"])
+    return ""
 
 
-def _leer_estado(estado: str) -> str:
+def _firmar_estado(usuario: str, plataforma: str) -> str:
+    return jwt.encode({"u": usuario, "p": plataforma, "t": "oauth-canales", "exp": int(time.time()) + 600}, jwt_secreto(), algorithm="HS256")
+
+
+def _leer_estado(estado: str) -> tuple[str, str]:
     d = jwt.decode(estado, jwt_secreto(), algorithms=["HS256"])
     if d.get("t") != "oauth-canales":
         raise ValueError("estado inválido")
-    return str(d["u"])
+    return str(d["u"]), str(d.get("p") or "facebook")
 
 
 def _canjear(code: str) -> str:
-    app_id, app_secret = leer("meta_app_id"), leer("wa_app_secret")
+    app_id, app_secret = _app_id(), leer("wa_app_secret")
     if not (app_id and app_secret):
         raise HTTPException(400, "Falta el App ID o el App Secret de tu app de Meta.")
     r = _graph(None, "/oauth/access_token", {
@@ -148,9 +175,9 @@ def _sesion(con, sid: str, yo: dict):
     return s
 
 
-def _descubrir(token: str, waba_ids: list[str] | None, con_paginas: bool) -> dict:
+def _descubrir(token: str, waba_ids: list[str] | None, con_paginas: bool, con_numeros: bool = True) -> dict:
     """Lista lo que este permiso deja conectar: páginas (con su Instagram) y números de WhatsApp."""
-    app_id, app_secret = leer("meta_app_id"), leer("wa_app_secret")
+    app_id, app_secret = _app_id(), leer("wa_app_secret")
     paginas: list[dict] = []
     numeros: list[dict] = []
     avisos: list[str] = []
@@ -162,6 +189,8 @@ def _descubrir(token: str, waba_ids: list[str] | None, con_paginas: bool) -> dic
                                 "ig": {"id": ig["id"], "usuario": ig.get("username", "")} if ig else None})
         except HTTPException as e:
             avisos.append(f"Páginas de Facebook: {e.detail}")
+    if not con_numeros:
+        return {"paginas": paginas, "numeros": numeros, "avisos": avisos}
     wabas = waba_ids
     if wabas is None:
         wabas = []
@@ -185,6 +214,44 @@ def _descubrir(token: str, waba_ids: list[str] | None, con_paginas: bool) -> dic
     return {"paginas": paginas, "numeros": numeros, "avisos": avisos}
 
 
+def _resumir(d: dict) -> dict:
+    """Convierte lo que responde Meta en un resumen claro, con qué hacer."""
+    num, cta = d.get("numero") or {}, d.get("cuenta") or {}
+    hs_n, hs_c = num.get("health_status") or {}, cta.get("health_status") or {}
+    problemas: list[dict] = []
+    for h in (hs_n, hs_c):
+        for e in h.get("entities", []) or []:
+            for er in e.get("errors", []) or []:
+                p = {"codigo": str(er.get("error_code", "")), "detalle": str(er.get("error_description", "")), "solucion": str(er.get("possible_solution", ""))}
+                if p not in problemas:
+                    problemas.append(p)
+    puede = str(hs_n.get("can_send_message") or hs_c.get("can_send_message") or "")
+    modo, calidad, estado = str(num.get("account_mode", "")), str(num.get("quality_rating", "")), str(num.get("status", ""))
+    verif, revision = str(cta.get("business_verification_status", "")), str(cta.get("account_review_status", ""))
+    acciones: list[str] = []
+    if puede == "BLOCKED" or any(p["codigo"] == "131031" for p in problemas):
+        acciones += [
+            "Meta bloqueó esta cuenta de WhatsApp. Entra a business.facebook.com → Todas las herramientas → Business Support Home y mira si hay una infracción de políticas. Si la hay, ábrela, corrige lo que pida y pulsa «Solicitar revisión» (suele responder en 24 a 48 horas).",
+            "Si no aparece ninguna infracción, el bloqueo suele venir del PIN de verificación en dos pasos: en WhatsApp Manager → tu número → desactiva la verificación en dos pasos y registra el número de nuevo con un PIN nuevo.",
+            "Si sigue bloqueado, abre un caso en Meta Direct Support con el ID de tu cuenta de WhatsApp Business y el código 131031.",
+            "Mientras tanto, pausa tus flujos de WhatsApp en CRM → Automatizaciones."]
+    elif puede == "LIMITED":
+        acciones.append("Meta limitó el envío de esta cuenta. Revisa Business Support Home y los problemas de abajo.")
+    if modo == "SANDBOX":
+        acciones.append("Este es un número de prueba de Meta: solo puede escribir a los números que agregaste como destinatarios de prueba. Conecta tu número real.")
+    if verif and verif != "verified":
+        acciones.append("Tu negocio no está verificado. Verifícalo en Meta Business → Configuración → Centro de seguridad: sin eso, los límites de envío son bajos.")
+    if calidad in ("RED", "YELLOW"):
+        acciones.append("La calidad del número es baja (clientes lo bloquean o lo reportan). Envía solo a quienes aceptaron recibir mensajes y evita textos promocionales repetidos.")
+    if estado and estado not in ("CONNECTED", "VERIFIED"):
+        acciones.append(f"El número está en estado «{estado}». Revísalo en WhatsApp Manager.")
+    if not acciones:
+        acciones.append("Meta no reporta problemas con este número. Si un mensaje no se entrega, mira el motivo que aparece debajo de ese mensaje en la conversación.")
+    return {"puede_enviar": puede, "estado_numero": estado, "calidad": calidad, "modo": modo, "verificacion_negocio": verif,
+            "revision_cuenta": revision, "nombre_aprobado": str(num.get("name_status", "")),
+            "numero": f"{num.get('display_phone_number', '')} {num.get('verified_name', '')}".strip(), "problemas": problemas, "acciones": acciones}
+
+
 # ---------------- Estado y configuración de la app ----------------
 @router.get("")
 def listar():
@@ -197,7 +264,7 @@ def listar():
     finally:
         con.close()
     return {
-        "app_id": leer("meta_app_id"), "config_id": leer("meta_login_config_id"),
+        "app_id": _app_id(), "config_id": leer("meta_login_config_id"),
         "app_secret_guardado": bool(leer("wa_app_secret")), "clave_ok": clave_ok(), "redirect_uri": _redirect_uri(),
         "canales": [{**dict(f), "legado": bool(f["legado"])} for f in filas],
     }
@@ -220,28 +287,28 @@ def guardar_app(d: AppIn, request: Request, yo: dict = Depends(solo_superadmin))
     return {"ok": True}
 
 
-# ---------------- Conexión con Meta (OAuth) ----------------
+# ---------------- Conexión con Meta (OAuth): un botón por plataforma ----------------
 @router.post("/oauth/iniciar")
-def iniciar(request: Request, yo: dict = Depends(solo_superadmin)):
-    app_id = leer("meta_app_id")
+def iniciar(d: IniciarIn, request: Request, yo: dict = Depends(solo_superadmin)):
+    app_id = _app_id()
     if not app_id:
-        raise HTTPException(400, "Primero guarda el App ID de tu app de Meta.")
+        raise HTTPException(400, "No se pudo detectar el App ID de tu app de Meta. Pégalo en «Ajustes avanzados» (Meta → tu app → Configuración → Básica).")
     if not leer("wa_app_secret"):
         raise HTTPException(400, "Falta el App Secret: guárdalo en CRM → Conexiones → tarjeta de WhatsApp.")
-    p = {"client_id": app_id, "redirect_uri": _redirect_uri(), "state": _firmar_estado(yo["usuario"]), "response_type": "code"}
+    p = {"client_id": app_id, "redirect_uri": _redirect_uri(), "state": _firmar_estado(yo["usuario"], d.plataforma), "response_type": "code"}
     config_id = leer("meta_login_config_id")
     if config_id:  # Facebook Login for Business: los permisos vienen de la configuración
         p["config_id"] = config_id
         p["override_default_response_type"] = "true"
     else:
-        p["scope"] = SCOPES
-    auditar("canales_oauth", yo["usuario"], ip_cliente(request), "inicio de conexión con Meta")
+        p["scope"] = SCOPES[d.plataforma]
+    auditar("canales_oauth", yo["usuario"], ip_cliente(request), f"inicio de conexión: {d.plataforma}")
     return {"url": f"https://www.facebook.com/{_version()}/dialog/oauth?" + urllib.parse.urlencode(p)}
 
 
 @router_callback.get("/callback")
 def callback(code: str = "", state: str = "", error: str = "", error_description: str = ""):
-    """Meta devuelve aquí al usuario. No hay sesión: el «state» firmado dice quién inició la conexión."""
+    """Meta devuelve aquí al usuario. No hay sesión: el «state» firmado dice quién inició la conexión y para qué plataforma."""
     destino = _front() + "/crm-admin"
 
     def volver(ok: bool, extra: str) -> RedirectResponse:
@@ -250,14 +317,14 @@ def callback(code: str = "", state: str = "", error: str = "", error_description
     if error or not code:
         return volver(False, "msg=" + urllib.parse.quote(error_description or "Se canceló la conexión con Meta"))
     try:
-        usuario = _leer_estado(state)
+        usuario, plataforma = _leer_estado(state)
     except Exception:
         return volver(False, "msg=" + urllib.parse.quote("El enlace de conexión venció. Inténtalo de nuevo."))
     try:
-        sid = _nueva_sesion(usuario, _canjear(code), "meta", "")
+        sid = _nueva_sesion(usuario, _canjear(code), plataforma, "")
     except HTTPException as e:
         return volver(False, "msg=" + urllib.parse.quote(str(e.detail)))
-    return volver(True, "sid=" + sid)
+    return volver(True, f"sid={sid}&p={plataforma}")
 
 
 # ---------------- WhatsApp con token permanente (usuario del sistema) ----------------
@@ -285,12 +352,17 @@ def activos(sid: str, yo: dict = Depends(solo_superadmin)):
             "SELECT tipo, ext_id FROM crm_canales WHERE estado <> 'desconectado'").fetchall()}
     finally:
         con.close()
-    d = _descubrir(token, [waba] if tipo == "whatsapp" else None, con_paginas=(tipo != "whatsapp"))
+    d = _descubrir(token, [waba] if waba else None, con_paginas=tipo in ("facebook", "instagram", "meta"), con_numeros=tipo in ("whatsapp", "meta"))
     for p in d["paginas"]:
         p["conectada"] = ("facebook", p["id"]) in conectados
         p["ig_conectada"] = bool(p["ig"]) and ("instagram", p["ig"]["id"]) in conectados
     for n in d["numeros"]:
         n["conectada"] = ("whatsapp", n["id"]) in conectados
+    if tipo == "instagram":
+        d["paginas"] = [p for p in d["paginas"] if p["ig"]]
+        if not d["paginas"]:
+            d["avisos"].append("Ninguna de tus páginas tiene una cuenta profesional de Instagram vinculada. En Instagram: Configuración → Cuenta profesional → vincúlala a tu página de Facebook.")
+    d["tipo"] = tipo
     return d
 
 
@@ -299,7 +371,7 @@ def conectar(sid: str, d: ConectarIn, request: Request, yo: dict = Depends(solo_
     if not clave_ok():
         raise HTTPException(400, "Falta SECRETS_KEY en el servidor: no se pueden guardar credenciales de forma segura.")
     if not (d.paginas or d.numeros):
-        raise HTTPException(400, "Elige al menos una página o un número.")
+        raise HTTPException(400, "Elige al menos una página, una cuenta o un número.")
     con = abrir_db()
     try:
         s = _sesion(con, sid, yo)
@@ -325,8 +397,9 @@ def conectar(sid: str, d: ConectarIn, request: Request, yo: dict = Depends(solo_
             ig = p.get("instagram_business_account") or {}
             con = abrir_db()
             try:
-                cn.guardar(con, "facebook", nombre, pid, "", "", "Messenger", ptoken, yo["usuario"])
-                conectados.append(f"Messenger: {nombre}")
+                if d.con_messenger:
+                    cn.guardar(con, "facebook", nombre, pid, "", "", "Messenger", ptoken, yo["usuario"])
+                    conectados.append(f"Messenger: {nombre}")
                 if ig.get("id") and ig["id"] in d.instagram:
                     usuario_ig = ig.get("username", "")
                     cn.guardar(con, "instagram", f"Instagram {usuario_ig or ig['id']}", ig["id"], "", pid, usuario_ig, ptoken, yo["usuario"])
@@ -391,6 +464,28 @@ def probar(cid: int):
         raise HTTPException(400, str(e))
     cn.marcar(cid, "activo", "")
     return {"ok": True, "detalle": detalle}
+
+
+@router.post("/{cid}/diagnostico")
+def diagnostico(cid: int):
+    """Pregunta a Meta por el estado del número de WhatsApp y de su cuenta, y explica qué hacer."""
+    con = abrir_db()
+    try:
+        c = cn.obtener(con, cid)
+    finally:
+        con.close()
+    if not c or c["estado"] == "desconectado":
+        raise HTTPException(404, "Canal no encontrado")
+    if c["tipo"] != "whatsapp":
+        raise HTTPException(400, "El estado detallado solo existe para WhatsApp. Usa «Probar» en este canal.")
+    try:
+        with cn.usando(cid):
+            r = _resumir(wa.diagnostico())
+    except wa.ErrorWa as e:
+        raise HTTPException(400, str(e))
+    if r["puede_enviar"] == "AVAILABLE" and not r["problemas"]:
+        cn.marcar(cid, "activo", "")
+    return r
 
 
 @router.patch("/{cid}")

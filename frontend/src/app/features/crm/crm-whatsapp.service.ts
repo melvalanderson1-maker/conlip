@@ -24,7 +24,12 @@ export interface CanalCrm {
 export interface EstadoCanales {
   app_id: string; config_id: string; app_secret_guardado: boolean; clave_ok: boolean; redirect_uri: string; canales: CanalCrm[];
 }
+export interface DiagnosticoWa {
+  puede_enviar: string; estado_numero: string; calidad: string; modo: string; verificacion_negocio: string; revision_cuenta: string;
+  nombre_aprobado: string; numero: string; problemas: { codigo: string; detalle: string; solucion: string }[]; acciones: string[];
+}
 export interface ActivosMeta {
+  tipo: string;
   paginas: { id: string; nombre: string; ig: { id: string; usuario: string } | null; conectada: boolean; ig_conectada: boolean }[];
   numeros: { id: string; waba_id: string; waba: string; numero: string; nombre: string; calidad: string; conectada: boolean }[];
   avisos: string[];
@@ -74,12 +79,13 @@ export class WhatsappService {
   // ---- Canales: varios números, páginas y cuentas (solo superadmin) ----
   canales(): Observable<EstadoCanales> { return this.http.get<EstadoCanales>(this.cnl); }
   guardarApp(d: { app_id: string; config_id: string }): Observable<unknown> { return this.http.put(`${this.cnl}/app`, d); }
-  iniciarOauth(): Observable<{ url: string }> { return this.http.post<{ url: string }>(`${this.cnl}/oauth/iniciar`, {}); }
+  iniciarOauth(plataforma: Canal): Observable<{ url: string }> { return this.http.post<{ url: string }>(`${this.cnl}/oauth/iniciar`, { plataforma }); }
+  diagnosticoCanal(id: number): Observable<DiagnosticoWa> { return this.http.post<DiagnosticoWa>(`${this.cnl}/${id}/diagnostico`, {}); }
   tokenWhatsapp(d: { waba_id: string; token: string }): Observable<{ sid: string }> {
     return this.http.post<{ sid: string }>(`${this.cnl}/token-whatsapp`, d);
   }
   activos(sid: string): Observable<ActivosMeta> { return this.http.get<ActivosMeta>(`${this.cnl}/sesiones/${sid}`); }
-  conectarSesion(sid: string, d: { paginas: string[]; instagram: string[]; numeros: { id: string; waba_id: string }[] }):
+  conectarSesion(sid: string, d: { paginas: string[]; instagram: string[]; numeros: { id: string; waba_id: string }[]; con_messenger: boolean }):
     Observable<{ conectados: string[]; avisos: string[] }> {
     return this.http.post<{ conectados: string[]; avisos: string[] }>(`${this.cnl}/sesiones/${sid}/conectar`, d);
   }

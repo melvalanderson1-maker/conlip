@@ -114,6 +114,29 @@ def info_numero() -> dict:
     return _graph("GET", f"/{c['phone_id']}", consulta={"fields": "display_phone_number,verified_name,quality_rating"})
 
 
+def diagnostico() -> dict:
+    """Estado del número y de la cuenta según Meta (para entender por qué no se entregan los mensajes)."""
+    c = _obligatoria()
+
+    def intentar(ruta: str, juegos: list[str]) -> dict:
+        for campos in juegos:  # si Meta no conoce algún campo, se prueba con menos
+            try:
+                return _graph("GET", ruta, consulta={"fields": campos})
+            except ErrorWa:
+                continue
+        return {}
+    numero = intentar(f"/{c['phone_id']}", [
+        "display_phone_number,verified_name,quality_rating,status,account_mode,name_status,platform_type,health_status",
+        "display_phone_number,verified_name,quality_rating,status,account_mode,name_status",
+        "display_phone_number,verified_name,quality_rating"])
+    cuenta = intentar(f"/{c['waba_id']}", [
+        "name,account_review_status,business_verification_status,health_status",
+        "name,account_review_status,business_verification_status", "name"]) if c["waba_id"] else {}
+    if not numero and not cuenta:
+        raise ErrorWa("Meta no devolvió información de este número. Revisa que el token tenga permiso sobre la cuenta de WhatsApp.")
+    return {"numero": numero, "cuenta": cuenta}
+
+
 def suscribir_app() -> bool:
     """Suscribe tu app a los avisos de tu cuenta de WhatsApp Business."""
     c = _obligatoria()
@@ -324,7 +347,7 @@ def _estado(con, s: dict) -> int | None:
     nuevo = {"sent": "enviado", "delivered": "entregado", "read": "leido", "failed": "fallido"}.get(s.get("status", ""))
     if not wa_id or not nuevo:
         return None
-    m = con.execute("SELECT id, lead_id, estado FROM crm_mensajes WHERE wa_id=? AND direccion='out'", (wa_id,)).fetchone()
+    m = con.execute("SELECT id, lead_id, estado, canal_id FROM crm_mensajes WHERE wa_id=? AND direccion='out'", (wa_id,)).fetchone()
     if not m:
         return None
     if nuevo != "fallido" and RANGO.get(nuevo, 0) <= RANGO.get(m["estado"], 0):
@@ -333,6 +356,8 @@ def _estado(con, s: dict) -> int | None:
     if nuevo == "fallido":
         e = (s.get("errors") or [{}])[0]
         error = traducir_error(e.get("code", 0), e.get("title") or e.get("message") or "")
+        if int(e.get("code", 0) or 0) in (131031, 190):  # cuenta bloqueada o token vencido: queda visible en CRM → Canales
+            cn.marcar(m["canal_id"], "error", error)
     con.execute("UPDATE crm_mensajes SET estado=?, error=? WHERE id=?", (nuevo, error, m["id"]))
     return m["lead_id"]
 

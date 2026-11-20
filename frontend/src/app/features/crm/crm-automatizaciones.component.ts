@@ -409,7 +409,19 @@ export class CrmAutomatizacionesComponent implements OnInit {
     });
   }
 
-  elegirModelo(id: string): void { if (id) this.fm.set(id); }
+  elegirModelo(id: string): void {
+    if (!id) return;
+    this.fm.set(id);
+    this.ocupado.set(true);
+    this.api.probarModelo(this.fp(), id, this.fk().trim()).subscribe({
+      next: (r) => { this.ocupado.set(false); this.ok(`${r.detalle} Si te sirve, pulsa «Guardar».`); },
+      error: (e: HttpErrorResponse) => {
+        this.ocupado.set(false);
+        const d = e.error?.detail;
+        this.falla(`«${id}» no funciona con tu clave: ${typeof d === 'string' ? d : 'sin conexión con el servidor'}`);
+      },
+    });
+  }
 
   probarIa(): void {
     this.ocupado.set(true);

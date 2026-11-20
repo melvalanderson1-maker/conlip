@@ -208,6 +208,24 @@ def _anthropic(c: dict, sistema: str, ms: list[dict]) -> str:
     return "".join(b.get("text", "") for b in r.get("content", []) if b.get("type") == "text").strip()
 
 
+def probar_modelo(proveedor: str, modelo: str, clave: str = "") -> str:
+    """Prueba un modelo concreto (con la clave escrita o la guardada) SIN guardarlo."""
+    c = config()
+    clave = clave.strip() or (c["clave"].strip() if proveedor == c["proveedor"] else "")
+    if not clave:
+        raise ErrorIA("Pega la clave de este proveedor para probar el modelo.")
+    cfg = {**c, "proveedor": proveedor, "modelo": modelo.strip().removeprefix("models/"), "clave": clave}
+    ms = [{"rol": "user", "texto": "Responde únicamente con la palabra OK."}]
+    if proveedor == "gemini":
+        texto = _gemini(cfg, BASE, ms)
+    elif proveedor == "anthropic":
+        texto = _anthropic(cfg, BASE, ms)
+    else:
+        url = "https://api.groq.com/openai/v1/chat/completions" if proveedor == "groq" else "https://openrouter.ai/api/v1/chat/completions"
+        texto = _compatible(url, cfg, BASE, ms)
+    return texto[:80] or "(respuesta vacía)"
+
+
 def responder(instrucciones: str, historial: list[tuple[str, str]], nombre: str = "") -> tuple[str, bool]:
     """Devuelve (texto, pasar_a_humano). Lanza ErrorIA con un mensaje legible."""
     global _ultimo

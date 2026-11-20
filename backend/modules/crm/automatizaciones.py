@@ -151,6 +151,21 @@ def ia_modelos(d: IaModelosIn):
         raise HTTPException(400, str(e))
 
 
+class IaProbarIn(BaseModel):
+    proveedor: Literal["gemini", "groq", "openrouter", "anthropic"]
+    modelo: str = Field(min_length=3, max_length=80, pattern=r"^[A-Za-z0-9._:/-]+$")
+    clave: str = Field(default="", max_length=300)
+
+
+@router.post("/ia/probar-modelo")
+def ia_probar_modelo(d: IaProbarIn):
+    try:
+        texto = ia.probar_modelo(d.proveedor, d.modelo, d.clave)
+    except ia.ErrorIA as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "detalle": f"«{d.modelo}» funciona. Respondió: {texto}."}
+
+
 @router.get("/ejecuciones/{eid}/registros")
 def registros(eid: int):
     con = abrir_db()
